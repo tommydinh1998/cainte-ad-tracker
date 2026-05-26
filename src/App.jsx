@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const PLATFORMS = ["Meta", "TikTok"];
 const SLACK_CHANNEL = "C0B6UQRJC9E";
@@ -536,15 +536,25 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function AdTracker() {
-  const [batches,        setBatches]       = useState(initialBatches);
-  const [activeTab,      setActiveTab]     = useState("batches"); // "batches" | "actions"
+  const [batches,        setBatches]       = useState([]);
+  const [loading,        setLoading]       = useState(true);
+  const [activeTab,      setActiveTab]     = useState("batches");
   const [showModal,      setShowModal]     = useState(false);
   const [editingBatch,   setEditingBatch]  = useState(null);
   const [filterPlatform, setFilterPlatform]= useState("All");
   const [filterState,    setFilterState]   = useState("All");
   const [search,         setSearch]        = useState("");
 
-  const handleUpdateAd = (batchId, adId, newStatus, issueNote, assignedTo) =>
+  // Load all batches from API on mount
+  useEffect(() => {
+    fetch("/api/batches")
+      .then(r => r.json())
+      .then(data => { setBatches(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const handleUpdateAd = async (batchId, adId, newStatus, issueNote, assignedTo) => {
+    // Optimistic update
     setBatches(prev => prev.map(b => b.id!==batchId ? b :
       { ...b, ads: b.ads.map(a => a.id!==adId ? a : {
         ...a,
@@ -553,11 +563,40 @@ export default function AdTracker() {
         assignedTo: assignedTo !== undefined ? assignedTo : a.assignedTo,
       })}
     ));
+    // Persist to DB
+    await fetch(`/api/ads/${adId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus, issueNote: issueNote||"", assignedTo: assignedTo||"" })
+    });
+  };
 
-  const handleDelete = id      => setBatches(prev=>prev.filter(b=>b.id!==id));
-  const handleAdd    = batch   => setBatches(prev=>[batch,...prev]);
+  const handleDelete = async (id) => {
+    setBatches(prev => prev.filter(b => b.id !== id));
+    await fetch(`/api/batches/${id}`, { method: "DELETE" });
+  };
+
+  const handleAdd = async (batch) => {
+    const res = await fetch("/api/batches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(batch)
+    });
+    const saved = await res.json();
+    setBatches(prev => [saved, ...prev]);
+  };
+
   const handleEdit   = batch   => setEditingBatch(batch);
-  const handleSave   = updated => setBatches(prev=>prev.map(b=>b.id===updated.id?updated:b));
+
+  const handleSave   = async (updated) => {
+    const res = await fetch(`/api/batches/${updated.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated)
+    });
+    const result = await res.json();
+    setBatches(prev => prev.map(b => b.id!==updated.id ? b : { ...updated, ads: result.ads || updated.ads }));
+  };
 
   const totalLive    = batches.reduce((s,b)=>s+b.ads.filter(a=>a.status==="live").length,    0);
   const totalPending = batches.reduce((s,b)=>s+b.ads.filter(a=>a.status==="pending").length, 0);
@@ -673,6 +712,11 @@ export default function AdTracker() {
         <ActionsView batches={batches} onUpdateAd={handleUpdateAd} />
       )}
 
+      {loading && (
+        <div style={{ position:"fixed",inset:0,background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",zIndex:999 }}>
+          <div style={{ fontSize:15,color:T.textSec }}>Loading…</div>
+        </div>
+      )}
       {showModal    && <SubmitModal onClose={()=>setShowModal(false)} onAdd={handleAdd} />}
       {editingBatch && <SubmitModal onClose={()=>setEditingBatch(null)} onAdd={handleAdd} onSave={handleSave} editBatch={editingBatch} />}
     </div>
