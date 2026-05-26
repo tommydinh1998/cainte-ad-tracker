@@ -167,24 +167,23 @@ const IssueModal = ({ ad, batch, onConfirm, onClose }) => {
 };
 
 // ── CopyCodesBtn ──────────────────────────────────────────────────────────────
-const CopyCodesBtn = ({ notes }) => {
+const CopyCodesBtn = ({ ads }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    // Extract just the spark codes (the values after ": " on each line)
-    const lines = notes.split("\n");
-    const codeStart = lines.findIndex(l => l.trim() === "Spark codes:");
-    const codes = codeStart >= 0
-      ? lines.slice(codeStart + 1).filter(l => l.trim()).map(l => {
-          const parts = l.split(": ");
-          return parts.length > 1 ? parts.slice(1).join(": ").trim() : l.trim();
-        })
-      : [];
-    navigator.clipboard.writeText(codes.join("\n")).then(() => {
+    const codes = ads
+      .filter(a => a.sparkCode?.trim())
+      .map(a => a.sparkCode.trim())
+      .join("\n");
+    if (!codes) return;
+    navigator.clipboard.writeText(codes).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
   };
+
+  const hasAnyCodes = ads.some(a => a.sparkCode?.trim());
+  if (!hasAnyCodes) return null;
 
   return (
     <button onClick={handleCopy}
@@ -451,22 +450,13 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
     if (!form.name.trim()) return;
     const ads = adRows.map((row, i) => {
       const name = row.name.trim() || `Ad ${i+1}`;
-      // For TikTok store spark code in issueNote temporarily until we add a proper field
-      // Actually store it in the name as "Name — code" if filled, or we use notes
       const ex = editBatch?.ads[i];
       return ex
-        ? { ...ex, name, sparkCode: row.sparkCode }
-        : { id:i+1, adId:genAdId(), name, status:"pending", issueNote:"", assignedTo:"", sparkCode: row.sparkCode };
+        ? { ...ex, name, sparkCode: row.sparkCode.trim() }
+        : { id:i+1, adId:genAdId(), name, status:"pending", issueNote:"", assignedTo:"", sparkCode: row.sparkCode.trim() };
     });
 
-    // For TikTok: build notes to include all spark codes for agency reference
-    let notes = form.notes;
-    if (isTikTok(form.platform)) {
-      const codes = adRows.filter(r=>r.sparkCode.trim()).map((r,i)=>`${r.name||`Ad ${i+1}`}: ${r.sparkCode.trim()}`);
-      if (codes.length) notes = (notes ? notes + "\n\n" : "") + "Spark codes:\n" + codes.join("\n");
-    }
-
-    const batchData = { ...form, notes, totalAds: ads.length, ads };
+    const batchData = { ...form, totalAds: ads.length, ads };
 
     if (isEdit) {
       onSave({ ...editBatch, ...batchData });
