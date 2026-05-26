@@ -459,8 +459,8 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
 
   const validate = () => {
     const e = {};
-    if (!form.name.trim()) e.name = "Batch name is required";
-    if (!form.creatorHandle.trim()) e.creatorHandle = "Creator / profile handle is required";
+    if (!isBoosting(form.platform) && !form.name.trim()) e.name = "Batch name is required";
+    if (!isBoosting(form.platform) && !form.creatorHandle.trim()) e.creatorHandle = "Creator / profile handle is required";
     if (!isTikTok(form.platform) && !form.link.trim()) e.link = `${isBoosting(form.platform) ? "Post" : "Google Sheet / Drive"} link is required`;
     if (isTikTok(form.platform) && adRows.every(r => !r.sparkCode.trim())) e.sparkCode = "At least one spark code is required";
     setErrors(e);
@@ -469,6 +469,11 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
 
   const handleSubmit = () => {
     if (!validate()) return;
+
+    // Auto-name Boosting batches
+    const name = isBoosting(form.platform)
+      ? `Boost — ${new Date().toLocaleDateString("en-GB", { day:"numeric", month:"short" })}`
+      : form.name;
 
     let ads = [];
     if (!isBoosting(form.platform)) {
@@ -481,7 +486,7 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
       });
     }
 
-    const batchData = { ...form, totalAds: ads.length, ads };
+    const batchData = { ...form, name, totalAds: ads.length, ads };
 
     if (isEdit) {
       onSave({ ...editBatch, ...batchData });
@@ -517,8 +522,12 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
         </div>
 
         {/* ── Step 2: Batch info ── */}
-        <Field label="Batch Name" value={form.name} onChange={v=>{set("name",v); if(v.trim()) setErrors(e=>({...e,name:null}));}} placeholder="e.g. June Partnership Ads" required error={errors.name} />
-        <Field label="Creator / Profile Handle" value={form.creatorHandle} onChange={v=>{set("creatorHandle",v); if(v.trim()) setErrors(e=>({...e,creatorHandle:null}));}} placeholder="@handle" required error={errors.creatorHandle} />
+        {!isBoosting(form.platform) && (
+          <Field label="Batch Name" value={form.name} onChange={v=>{set("name",v); if(v.trim()) setErrors(e=>({...e,name:null}));}} placeholder="e.g. June Partnership Ads" required error={errors.name} />
+        )}
+        {!isBoosting(form.platform) && (
+          <Field label="Creator / Profile Handle" value={form.creatorHandle} onChange={v=>{set("creatorHandle",v); if(v.trim()) setErrors(e=>({...e,creatorHandle:null}));}} placeholder="@handle" required error={errors.creatorHandle} />
+        )}
         <Field label="Submitted by" value={form.submittedBy} onChange={v=>set("submittedBy",v)} placeholder="Your name" />
 
         {/* ── Step 3: Source — changes by platform ── */}
@@ -533,7 +542,9 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
           />
         )}
 
-        <Field label="Notes for Agency" value={form.notes} onChange={v=>set("notes",v)} placeholder="Context, priorities, geo restrictions…" />
+        {!isBoosting(form.platform) && (
+          <Field label="Notes for Agency" value={form.notes} onChange={v=>set("notes",v)} placeholder="Context, priorities, geo restrictions…" />
+        )}
 
         {/* ── Step 4: Ads — hidden for Boosting ── */}
         {!isBoosting(form.platform) && (
