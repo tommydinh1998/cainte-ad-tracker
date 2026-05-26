@@ -415,14 +415,17 @@ const ActionsView = ({ batches, onUpdateAd }) => {
 };
 
 // ── Field + SubmitModal ───────────────────────────────────────────────────────
-const Field = ({ label, value, onChange, placeholder, type="text" }) => (
+const Field = ({ label, value, onChange, placeholder, type="text", error, required }) => (
   <div style={{ marginBottom:18 }}>
-    <div style={{ fontSize:13, fontWeight:600, color:T.textSec, marginBottom:7 }}>{label}</div>
+    <div style={{ fontSize:13, fontWeight:600, color:T.textSec, marginBottom:7 }}>
+      {label}{required && <span style={{ color:T.red, marginLeft:3 }}>*</span>}
+    </div>
     <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
-      style={{ width:"100%", background:T.bg, border:"1.5px solid rgba(60,60,67,0.1)", borderRadius:12, padding:"13px 15px", color:T.text, fontSize:15, boxSizing:"border-box", outline:"none", fontFamily:"inherit", transition:"border-color 0.15s" }}
-      onFocus={e=>e.target.style.borderColor=T.blue}
-      onBlur={e=>e.target.style.borderColor="rgba(60,60,67,0.1)"}
+      style={{ width:"100%", background:T.bg, border:`1.5px solid ${error ? T.red : "rgba(60,60,67,0.1)"}`, borderRadius:12, padding:"13px 15px", color:T.text, fontSize:15, boxSizing:"border-box", outline:"none", fontFamily:"inherit", transition:"border-color 0.15s" }}
+      onFocus={e=>e.target.style.borderColor=error?T.red:T.blue}
+      onBlur={e=>e.target.style.borderColor=error?T.red:"rgba(60,60,67,0.1)"}
     />
+    {error && <div style={{ fontSize:12, color:T.red, marginTop:4 }}>{error}</div>}
   </div>
 );
 
@@ -451,8 +454,19 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
   const removeRow = (i) => setAdRows(prev => prev.length > 1 ? prev.filter((_,j)=>j!==i) : prev);
   const updateRow = (i, field, val) => setAdRows(prev => prev.map((r,j) => j===i ? {...r,[field]:val} : r));
 
+  const [errors, setErrors] = useState({});
+
+  const validate = () => {
+    const e = {};
+    if (!form.name.trim())        e.name = "Batch name is required";
+    if (!form.submittedBy.trim()) e.submittedBy = "Please enter your name";
+    if (adRows.every(r => !r.name.trim())) e.ads = "At least one ad needs a name";
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
   const handleSubmit = () => {
-    if (!form.name.trim()) return;
+    if (!validate()) return;
     const ads = adRows.map((row, i) => {
       const name = row.name.trim() || `Ad ${i+1}`;
       const ex = editBatch?.ads[i];
@@ -471,6 +485,7 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
     onClose();
   };
 
+  const errStyle = { fontSize:12, color:T.red, marginTop:4, marginBottom:0 };
   const inputStyle = { width:"100%", background:T.bg, border:"1.5px solid rgba(60,60,67,0.1)", borderRadius:12, padding:"13px 15px", color:T.text, fontSize:15, boxSizing:"border-box", outline:"none", fontFamily:"inherit", transition:"border-color 0.15s" };
   const smallInput = { ...inputStyle, padding:"10px 13px", fontSize:14, borderRadius:10 };
 
@@ -493,9 +508,9 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
         </div>
 
         {/* ── Step 2: Batch info ── */}
-        <Field label="Batch Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. June Partnership Ads" />
+        <Field label="Batch Name" value={form.name} onChange={v=>{set("name",v); if(v.trim()) setErrors(e=>({...e,name:null}));}} placeholder="e.g. June Partnership Ads" required error={errors.name} />
         <Field label="Creator / Profile Handle" value={form.creatorHandle} onChange={v=>set("creatorHandle",v)} placeholder="@handle — leave blank if not a partnership" />
-        <Field label="Submitted by" value={form.submittedBy} onChange={v=>set("submittedBy",v)} placeholder="Your name" />
+        <Field label="Submitted by" value={form.submittedBy} onChange={v=>{set("submittedBy",v); if(v.trim()) setErrors(e=>({...e,submittedBy:null}));}} placeholder="Your name" required error={errors.submittedBy} />
 
         {/* ── Step 3: Source — changes by platform ── */}
         {isTikTok(form.platform) ? null : (
@@ -510,8 +525,10 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
             <div style={{ fontSize:13,fontWeight:600,color:T.textSec }}>
               {isTikTok(form.platform) ? "Ads & Spark Codes" : "Ads"}
               <span style={{ color:T.textTert,fontWeight:400 }}> — IDs auto-assigned</span>
+              <span style={{ color:T.red, marginLeft:3 }}>*</span>
             </div>
           </div>
+          {errors.ads && <div style={{ fontSize:12, color:T.red, marginBottom:8 }}>{errors.ads}</div>}
 
           {/* Column headers for TikTok */}
           {isTikTok(form.platform) && (
