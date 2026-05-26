@@ -166,6 +166,34 @@ const IssueModal = ({ ad, batch, onConfirm, onClose }) => {
   );
 };
 
+// ── CopyCodesBtn ──────────────────────────────────────────────────────────────
+const CopyCodesBtn = ({ notes }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    // Extract just the spark codes (the values after ": " on each line)
+    const lines = notes.split("\n");
+    const codeStart = lines.findIndex(l => l.trim() === "Spark codes:");
+    const codes = codeStart >= 0
+      ? lines.slice(codeStart + 1).filter(l => l.trim()).map(l => {
+          const parts = l.split(": ");
+          return parts.length > 1 ? parts.slice(1).join(": ").trim() : l.trim();
+        })
+      : [];
+    navigator.clipboard.writeText(codes.join("\n")).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <button onClick={handleCopy}
+      style={{ background: copied ? T.green+"18" : T.pillBg, border:"none", borderRadius:7, color: copied ? T.green : T.blue, fontSize:11, fontWeight:600, padding:"3px 10px", cursor:"pointer", transition:"all 0.2s", flexShrink:0 }}>
+      {copied ? "✓ Copied" : "Copy all codes"}
+    </button>
+  );
+};
+
 // ── BatchCard ─────────────────────────────────────────────────────────────────
 const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
   const [expanded,    setExpanded]   = useState(false);
@@ -208,7 +236,17 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
           {(batch.link||batch.notes) && (
             <div style={{ padding:"12px 16px 4px" }}>
               {batch.link && <div style={{ marginBottom:10 }}><Label>Source</Label><a href={batch.link} target="_blank" rel="noopener noreferrer" style={{ fontSize:12, color:T.blue, wordBreak:"break-all", lineHeight:1.5 }}>{batch.link}</a></div>}
-              {batch.notes && <div style={{ marginBottom:10 }}><Label>Notes</Label><div style={{ fontSize:13, color:T.text, lineHeight:1.55 }}>{batch.notes}</div></div>}
+              {batch.notes && (
+                <div style={{ marginBottom:10 }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+                    <Label>Notes</Label>
+                    {batch.platform === "TikTok" && batch.notes.includes("Spark codes:") && (
+                      <CopyCodesBtn notes={batch.notes} />
+                    )}
+                  </div>
+                  <div style={{ fontSize:13, color:T.text, lineHeight:1.55 }}>{batch.notes}</div>
+                </div>
+              )}
             </div>
           )}
           <div style={{ paddingBottom:6 }}>
