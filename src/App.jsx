@@ -171,7 +171,8 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
   const [expanded,    setExpanded]   = useState(false);
   const [issueModal,  setIssueModal] = useState(null);
   const { isComplete } = getBatchState(batch);
-  const daysSubmitted  = daysBetween(batch.submittedDate, today);
+  const submittedDate  = new Date(batch.submittedDate);
+  const daysSubmitted  = daysBetween(submittedDate, today);
   const hasIssues      = batch.ads.some(a => a.status === "issue");
 
   return (
@@ -196,7 +197,7 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
         {/* title + meta inline */}
         <div style={{ display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap" }}>
           <div style={{ fontSize:15, fontWeight:700, color:T.text, letterSpacing:"-0.02em" }}>{batch.name}</div>
-          <div style={{ fontSize:11, color:T.textSec }}>{batch.submittedBy} · {fmt(batch.submittedDate)} · {daysSubmitted}d ago · {batch.ads.length} ad{batch.ads.length!==1?"s":""}</div>
+          <div style={{ fontSize:11, color:T.textSec }}>{batch.submittedBy} · {fmt(submittedDate)} · {daysSubmitted}d ago · {batch.ads.length} ad{batch.ads.length!==1?"s":""}</div>
         </div>
 
         <ProgressBar batch={batch} />
