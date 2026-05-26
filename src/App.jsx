@@ -212,6 +212,20 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
           {hasIssues && !isComplete && <Chip color={T.red}>Needs action</Chip>}
           {isComplete && <Chip color={T.green}>✓ Complete</Chip>}
           <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:2 }}>
+            {!isComplete && (
+              <button
+                onClick={async () => {
+                  for (const ad of batch.ads) {
+                    if (ad.status !== "live") {
+                      await onUpdateAd(batch.id, ad.id, "live", "", "");
+                    }
+                  }
+                }}
+                title="Mark all ads as live"
+                style={{ background:T.green+"18", border:"none", borderRadius:7, color:T.green, fontSize:11, fontWeight:600, padding:"4px 10px", cursor:"pointer", marginRight:2 }}>
+                ✓ All live
+              </button>
+            )}
             <IconBtn onClick={() => onEdit(batch)}      title="Edit"   emoji="✏️" />
             <IconBtn onClick={() => onDelete(batch.id)} title="Delete" emoji="🗑" />
             <button onClick={() => setExpanded(e=>!e)}
