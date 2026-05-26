@@ -33,13 +33,38 @@ async function initDB() {
       status TEXT DEFAULT 'pending',
       issue_note TEXT DEFAULT '',
       assigned_to TEXT DEFAULT '',
+      spark_code TEXT DEFAULT '',
       sort_order INTEGER DEFAULT 0
     );
+  `);
+  // Add spark_code column if it doesn't exist (migration)
+  await pool.query(`
+    ALTER TABLE ads ADD COLUMN IF NOT EXISTS spark_code TEXT DEFAULT '';
   `);
   console.log('DB ready');
 }
 
-// ── API Routes ────────────────────────────────────────────────────────────────
+const mapAd = (a) => ({
+  id:         a.id,
+  adId:       a.ad_id,
+  name:       a.name,
+  status:     a.status,
+  issueNote:  a.issue_note,
+  assignedTo: a.assigned_to,
+  sparkCode:  a.spark_code || '',
+});
+
+const mapBatch = (b, ads) => ({
+  id:            b.id,
+  name:          b.name,
+  platform:      b.platform,
+  link:          b.link,
+  notes:         b.notes,
+  submittedBy:   b.submitted_by,
+  creatorHandle: b.creator_handle,
+  submittedDate: b.submitted_date,
+  ads:           ads.filter(a => a.batch_id === b.id).map(mapAd),
+});
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
@@ -47,25 +72,7 @@ app.get('/api/batches', async (req, res) => {
   try {
     const batchRes = await pool.query('SELECT * FROM batches ORDER BY created_at DESC');
     const adRes    = await pool.query('SELECT * FROM ads ORDER BY sort_order ASC, id ASC');
-    const batches  = batchRes.rows.map(b => ({
-      id:            b.id,
-      name:          b.name,
-      platform:      b.platform,
-      link:          b.link,
-      notes:         b.notes,
-      submittedBy:   b.submitted_by,
-      creatorHandle: b.creator_handle,
-      submittedDate: b.submitted_date,
-      ads: adRes.rows.filter(a => a.batch_id === b.id).map(a => ({
-        id:         a.id,
-        adId:       a.ad_id,
-        name:       a.name,
-        status:     a.status,
-        issueNote:  a.issue_note,
-        assignedTo: a.assigned_to,
-      }))
-    }));
-    res.json(batches);
+    res.json(batchRes.rows.map(b => mapBatch(b, adRes.rows)));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
@@ -83,14 +90,13 @@ app.post('/api/batches', async (req, res) => {
     for (let i = 0; i < ads.length; i++) {
       const a = ads[i];
       const aRes = await client.query(
-        `INSERT INTO ads (batch_id,ad_id,name,status,issue_note,assigned_to,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [batch.id, a.adId, a.name, a.status||'pending', a.issueNote||'', a.assignedTo||'', i]
+        `INSERT INTO ads (batch_id,ad_id,name,status,issue_note,assigned_to,spark_code,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [batch.id, a.adId, a.name, a.status||'pending', a.issueNote||'', a.assignedTo||'', a.sparkCode||'', i]
       );
-      const r = aRes.rows[0];
-      insertedAds.push({ id:r.id, adId:r.ad_id, name:r.name, status:r.status, issueNote:r.issue_note, assignedTo:r.assigned_to });
+      insertedAds.push(mapAd(aRes.rows[0]));
     }
     await client.query('COMMIT');
-    res.json({ id:batch.id, name:batch.name, platform:batch.platform, link:batch.link, notes:batch.notes, submittedBy:batch.submitted_by, creatorHandle:batch.creator_handle, submittedDate:batch.submitted_date, ads:insertedAds });
+    res.json(mapBatch(batch, insertedAds.map((a,i) => ({...a, batch_id: batch.id}))));
   } catch (e) {
     await client.query('ROLLBACK');
     console.error(e); res.status(500).json({ error: e.message });
@@ -111,14 +117,13 @@ app.put('/api/batches/:id', async (req, res) => {
     for (let i = 0; i < ads.length; i++) {
       const a = ads[i];
       const aRes = await client.query(
-        `INSERT INTO ads (batch_id,ad_id,name,status,issue_note,assigned_to,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [req.params.id, a.adId, a.name, a.status||'pending', a.issueNote||'', a.assignedTo||'', i]
+        `INSERT INTO ads (batch_id,ad_id,name,status,issue_note,assigned_to,spark_code,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [req.params.id, a.adId, a.name, a.status||'pending', a.issueNote||'', a.assignedTo||'', a.sparkCode||'', i]
       );
-      const r = aRes.rows[0];
-      updatedAds.push({ id:r.id, adId:r.ad_id, name:r.name, status:r.status, issueNote:r.issue_note, assignedTo:r.assigned_to });
+      updatedAds.push(mapAd(aRes.rows[0]));
     }
     await client.query('COMMIT');
-    res.json({ success:true, ads:updatedAds });
+    res.json({ success:true, ads: updatedAds });
   } catch (e) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: e.message });
@@ -143,17 +148,12 @@ app.patch('/api/ads/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Serve React frontend ──────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '../dist')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 initDB().then(() => {
   app.listen(PORT, '0.0.0.0', () => console.log(`Server on port ${PORT}`));
-}).catch(err => {
-  console.error('DB init failed:', err);
-  process.exit(1);
-});
+}).catch(err => { console.error('DB init failed:', err); process.exit(1); });
