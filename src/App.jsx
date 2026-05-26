@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 
-const PLATFORMS = ["Meta", "TikTok"];
+const PLATFORMS = ["Meta", "TikTok", "Boosting"];
 const SLACK_CHANNEL = "C0B6UQRJC9E";
-const PLATFORM_CONFIG = { Meta: { color: "#007AFF" }, TikTok: { color: "#FF2D55" } };
+const PLATFORM_CONFIG = { Meta: { color: "#007AFF" }, TikTok: { color: "#FF2D55" }, Boosting: { color: "#FF9500" } };
 
 const today = new Date();
 const fmt = (d) => d.toLocaleDateString("en-GB", { month: "short", day: "numeric" });
@@ -431,7 +431,8 @@ const Field = ({ label, value, onChange, placeholder, type="text", error, requir
 
 const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
   const isEdit = !!editBatch;
-  const isTikTok = (platform) => platform === "TikTok";
+  const isTikTok   = (p) => p === "TikTok";
+  const isBoosting = (p) => p === "Boosting";
 
   const [form, setForm] = useState({
     name: editBatch?.name||"",
@@ -460,7 +461,7 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
     const e = {};
     if (!form.name.trim()) e.name = "Batch name is required";
     if (!form.creatorHandle.trim()) e.creatorHandle = "Creator / profile handle is required";
-    if (!isTikTok(form.platform) && !form.link.trim()) e.link = "Google Sheet / Drive link is required";
+    if (!isTikTok(form.platform) && !form.link.trim()) e.link = `${isBoosting(form.platform) ? "Post" : "Google Sheet / Drive"} link is required`;
     if (isTikTok(form.platform) && adRows.every(r => !r.sparkCode.trim())) e.sparkCode = "At least one spark code is required";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -468,13 +469,17 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
 
   const handleSubmit = () => {
     if (!validate()) return;
-    const ads = adRows.map((row, i) => {
-      const name = row.name.trim() || `Ad ${i+1}`;
-      const ex = editBatch?.ads[i];
-      return ex
-        ? { ...ex, name, sparkCode: row.sparkCode.trim() }
-        : { id:i+1, adId:genAdId(), name, status:"pending", issueNote:"", assignedTo:"", sparkCode: row.sparkCode.trim() };
-    });
+
+    let ads = [];
+    if (!isBoosting(form.platform)) {
+      ads = adRows.map((row, i) => {
+        const name = row.name.trim() || `Ad ${i+1}`;
+        const ex = editBatch?.ads[i];
+        return ex
+          ? { ...ex, name, sparkCode: row.sparkCode.trim() }
+          : { id:i+1, adId:genAdId(), name, status:"pending", issueNote:"", assignedTo:"", sparkCode: row.sparkCode.trim() };
+      });
+    }
 
     const batchData = { ...form, totalAds: ads.length, ads };
 
@@ -518,10 +523,20 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
 
         {/* ── Step 3: Source — changes by platform ── */}
         {isTikTok(form.platform) ? null : (
-          <Field label="Google Sheet / Drive Link" value={form.link} onChange={v=>{set("link",v); if(v.trim()) setErrors(e=>({...e,link:null}));}} placeholder="https://" required error={errors.link} />
+          <Field
+            label={isBoosting(form.platform) ? "Post Link" : "Google Sheet / Drive Link"}
+            value={form.link}
+            onChange={v=>{set("link",v); if(v.trim()) setErrors(e=>({...e,link:null}));}}
+            placeholder="https://"
+            required
+            error={errors.link}
+          />
         )}
 
         <Field label="Notes for Agency" value={form.notes} onChange={v=>set("notes",v)} placeholder="Context, priorities, geo restrictions…" />
+
+        {/* ── Step 4: Ads — hidden for Boosting ── */}
+        {!isBoosting(form.platform) && (
 
         {/* ── Step 4: Ads ── */}
         <div style={{ marginBottom:28 }}>
@@ -609,6 +624,7 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
             </button>
           )}
         </div>
+        )}
 
         <div style={{ display:"flex",gap:10 }}>
           <button onClick={onClose} style={{ flex:1,padding:"15px 0",background:T.bg,border:"none",borderRadius:13,color:T.text,fontSize:16,fontWeight:600,cursor:"pointer" }}>Cancel</button>
