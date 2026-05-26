@@ -89,9 +89,12 @@ app.post('/api/batches', async (req, res) => {
     const insertedAds = [];
     for (let i = 0; i < ads.length; i++) {
       const a = ads[i];
+      // Generate adId from DB sequence to guarantee uniqueness
+      const seqRes = await client.query(`SELECT nextval('ads_id_seq') AS next_id`);
+      const uniqueAdId = '#' + String(seqRes.rows[0].next_id).padStart(4, '0');
       const aRes = await client.query(
-        `INSERT INTO ads (batch_id,ad_id,name,status,issue_note,assigned_to,spark_code,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [batch.id, a.adId, a.name, a.status||'pending', a.issueNote||'', a.assignedTo||'', a.sparkCode||'', i]
+        `INSERT INTO ads (id,batch_id,ad_id,name,status,issue_note,assigned_to,spark_code,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [seqRes.rows[0].next_id, batch.id, uniqueAdId, a.name, a.status||'pending', a.issueNote||'', a.assignedTo||'', a.sparkCode||'', i]
       );
       insertedAds.push(mapAd(aRes.rows[0]));
     }
@@ -121,9 +124,15 @@ app.put('/api/batches/:id', async (req, res) => {
     const updatedAds = [];
     for (let i = 0; i < ads.length; i++) {
       const a = ads[i];
+      // Preserve existing adId if ad existed, generate new unique one if new
+      const adId = a.adId && a.adId.startsWith('#') && a.id ? a.adId : (() => {
+        // Will be set after sequence call below
+      })();
+      const seqRes2 = await client.query(`SELECT nextval('ads_id_seq') AS next_id`);
+      const finalAdId = (a.adId && a.adId.startsWith('#') && a.id) ? a.adId : '#' + String(seqRes2.rows[0].next_id).padStart(4, '0');
       const aRes = await client.query(
-        `INSERT INTO ads (batch_id,ad_id,name,status,issue_note,assigned_to,spark_code,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [req.params.id, a.adId, a.name, a.status||'pending', a.issueNote||'', a.assignedTo||'', a.sparkCode||'', i]
+        `INSERT INTO ads (id,batch_id,ad_id,name,status,issue_note,assigned_to,spark_code,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [seqRes2.rows[0].next_id, req.params.id, finalAdId, a.name, a.status||'pending', a.issueNote||'', a.assignedTo||'', a.sparkCode||'', i]
       );
       updatedAds.push(mapAd(aRes.rows[0]));
     }
