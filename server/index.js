@@ -96,7 +96,12 @@ app.post('/api/batches', async (req, res) => {
       insertedAds.push(mapAd(aRes.rows[0]));
     }
     await client.query('COMMIT');
-    res.json(mapBatch(batch, insertedAds.map((a,i) => ({...a, batch_id: batch.id}))));
+    res.json({
+      id: batch.id, name: batch.name, platform: batch.platform,
+      link: batch.link, notes: batch.notes, submittedBy: batch.submitted_by,
+      creatorHandle: batch.creator_handle, submittedDate: batch.submitted_date,
+      ads: insertedAds
+    });
   } catch (e) {
     await client.query('ROLLBACK');
     console.error(e); res.status(500).json({ error: e.message });
