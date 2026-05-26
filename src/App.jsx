@@ -576,13 +576,38 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
             ))}
           </div>
 
-          {/* Add row */}
-          <button onClick={addRow}
-            style={{ marginTop:10,background:"none",border:`1.5px dashed rgba(60,60,67,0.2)`,borderRadius:10,color:T.textSec,fontSize:13,fontWeight:600,cursor:"pointer",padding:"9px 0",width:"100%",transition:"all 0.15s" }}
-            onMouseEnter={e=>e.target.style.borderColor=T.blue}
-            onMouseLeave={e=>e.target.style.borderColor="rgba(60,60,67,0.2)"}>
-            + Add ad
-          </button>
+          {/* Meta: quick number generator | TikTok: + Add ad */}
+          {!isTikTok(form.platform) ? (
+            <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:13, color:T.textSec }}>Generate</span>
+              <input
+                type="number" min="1" max="50"
+                placeholder="e.g. 5"
+                style={{ ...smallInput, width:80, textAlign:"center", padding:"8px 10px" }}
+                onFocus={e=>e.target.style.borderColor=T.blue}
+                onBlur={e=>e.target.style.borderColor="rgba(60,60,67,0.1)"}
+                onChange={e => {
+                  const n = Math.max(1, Math.min(50, Number(e.target.value)));
+                  if (n && e.target.value) {
+                    setAdRows(Array.from({length:n}, (_,i) => ({ name:"", sparkCode:"" })));
+                    if (errors.ads) setErrors(err => ({...err, ads:null}));
+                  }
+                }}
+              />
+              <span style={{ fontSize:13, color:T.textSec }}>rows — or</span>
+              <button onClick={addRow}
+                style={{ background:"none", border:"none", color:T.blue, fontSize:13, fontWeight:600, cursor:"pointer", padding:0 }}>
+                + Add one
+              </button>
+            </div>
+          ) : (
+            <button onClick={addRow}
+              style={{ marginTop:10,background:"none",border:`1.5px dashed rgba(60,60,67,0.2)`,borderRadius:10,color:T.textSec,fontSize:13,fontWeight:600,cursor:"pointer",padding:"9px 0",width:"100%",transition:"all 0.15s" }}
+              onMouseEnter={e=>e.target.style.borderColor=T.blue}
+              onMouseLeave={e=>e.target.style.borderColor="rgba(60,60,67,0.2)"}>
+              + Add ad
+            </button>
+          )}
         </div>
 
         <div style={{ display:"flex",gap:10 }}>
