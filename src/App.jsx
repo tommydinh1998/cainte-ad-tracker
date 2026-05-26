@@ -546,9 +546,9 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
           <div style={{ display:"flex",flexDirection:"column",gap:8,maxHeight:280,overflowY:"auto" }}>
             {adRows.map((row,i) => (
               <div key={i} style={{ display:"grid", gridTemplateColumns: isTikTok(form.platform) ? "44px 1fr 160px 28px" : "44px 1fr 28px", gap:8, alignItems:"center" }}>
-                {/* ID */}
+                {/* ID — assigned by DB on save */}
                 <span style={{ fontSize:11,color:T.textTert,fontFamily:"ui-monospace,monospace",textAlign:"right",paddingRight:4 }}>
-                  #{String(nextAdId+i).padStart(4,"0")}
+                  #auto
                 </span>
                 {/* Ad name */}
                 <input
