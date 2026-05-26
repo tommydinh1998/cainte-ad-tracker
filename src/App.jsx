@@ -537,8 +537,6 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
 
         {/* ── Step 4: Ads — hidden for Boosting ── */}
         {!isBoosting(form.platform) && (
-
-        {/* ── Step 4: Ads ── */}
         <div style={{ marginBottom:28 }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
             <div style={{ fontSize:13,fontWeight:600,color:T.textSec }}>
