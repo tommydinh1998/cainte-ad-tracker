@@ -223,7 +223,7 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
                 }}
                 title="Mark all ads as live"
                 style={{ background:T.blue+"18", border:"none", borderRadius:7, color:T.blue, fontSize:11, fontWeight:600, padding:"4px 10px", cursor:"pointer", marginRight:2 }}>
-                Make all live
+                Mark all live
               </button>
             )}
             <IconBtn onClick={() => onEdit(batch)}      title="Edit"   emoji="✏️" />
