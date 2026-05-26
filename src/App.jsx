@@ -230,7 +230,7 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
             <IconBtn onClick={() => onDelete(batch.id)} title="Delete" emoji="🗑" />
             <button onClick={() => setExpanded(e=>!e)}
               style={{ background:T.pillBg, border:"none", borderRadius:7, color:T.textSec, fontSize:10, fontWeight:600, padding:"4px 9px", cursor:"pointer", letterSpacing:"0.01em" }}>
-              {expanded?"Less ▲":"More ▼"}
+              {expanded?"Hide ▲":"View ▼"}
             </button>
           </div>
         </div>
