@@ -232,20 +232,25 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
 
       {expanded && (
         <div style={{ borderTop:`1px solid ${T.border}` }}>
-          {(batch.link||batch.notes) && (
+          {(batch.link || batch.notes || (batch.platform === "TikTok" && batch.ads.some(a => a.sparkCode))) && (
             <div style={{ padding:"12px 16px 4px" }}>
               {batch.link && <div style={{ marginBottom:10 }}><Label>Source</Label><a href={batch.link} target="_blank" rel="noopener noreferrer" style={{ fontSize:12, color:T.blue, wordBreak:"break-all", lineHeight:1.5 }}>{batch.link}</a></div>}
-              {batch.notes && (
+              {batch.platform === "TikTok" && batch.ads.some(a => a.sparkCode) && (
                 <div style={{ marginBottom:10 }}>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
-                    <Label>Notes</Label>
-                    {batch.platform === "TikTok" && batch.notes.includes("Spark codes:") && (
-                      <CopyCodesBtn notes={batch.notes} />
-                    )}
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+                    <Label>Spark Codes</Label>
+                    <CopyCodesBtn ads={batch.ads} />
                   </div>
-                  <div style={{ fontSize:13, color:T.text, lineHeight:1.55 }}>{batch.notes}</div>
+                  {batch.ads.filter(a => a.sparkCode).map(a => (
+                    <div key={a.id} style={{ display:"flex", gap:10, alignItems:"center", marginBottom:4 }}>
+                      <span style={{ fontSize:11, color:T.textTert, fontFamily:"ui-monospace,monospace", flexShrink:0, minWidth:44 }}>{a.adId}</span>
+                      <span style={{ fontSize:12, color:T.textSec, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.name}</span>
+                      <span style={{ fontSize:12, color:T.text, fontFamily:"ui-monospace,monospace", background:T.bg, borderRadius:6, padding:"2px 8px", flexShrink:0 }}>{a.sparkCode}</span>
+                    </div>
+                  ))}
                 </div>
               )}
+              {batch.notes && <div style={{ marginBottom:10 }}><Label>Notes</Label><div style={{ fontSize:13, color:T.text, lineHeight:1.55 }}>{batch.notes}</div></div>}
             </div>
           )}
           <div style={{ paddingBottom:6 }}>
