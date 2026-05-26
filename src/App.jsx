@@ -452,6 +452,9 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function AdTracker() {
   const [batches,        setBatches]       = useState([]);
+  const [authed,         setAuthed]        = useState(() => sessionStorage.getItem("cainte_auth") === "1");
+  const [pwInput,        setPwInput]       = useState("");
+  const [pwError,        setPwError]       = useState(false);
   const [loading,        setLoading]       = useState(true);
   const [activeTab,      setActiveTab]     = useState("batches");
   const [showModal,      setShowModal]     = useState(false);
@@ -459,6 +462,46 @@ export default function AdTracker() {
   const [filterPlatform, setFilterPlatform]= useState("All");
   const [filterState,    setFilterState]   = useState("All");
   const [search,         setSearch]        = useState("");
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (pwInput === "coda") {
+      sessionStorage.setItem("cainte_auth", "1");
+      setAuthed(true);
+      setPwError(false);
+    } else {
+      setPwError(true);
+      setPwInput("");
+    }
+  };
+
+  if (!authed) {
+    return (
+      <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"-apple-system,'SF Pro Display',BlinkMacSystemFont,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
+        <style>{`*{box-sizing:border-box;margin:0;padding:0;} input::placeholder{color:rgba(60,60,67,0.3);}`}</style>
+        <div style={{ background:"#fff", borderRadius:22, padding:"40px 36px", width:"100%", maxWidth:380, boxShadow:"0 8px 40px rgba(0,0,0,0.10), 0 0 0 0.5px rgba(0,0,0,0.06)", textAlign:"center" }}>
+          <div style={{ fontSize:36, marginBottom:16 }}>🔒</div>
+          <div style={{ fontSize:22, fontWeight:700, color:T.text, letterSpacing:"-0.025em", marginBottom:8 }}>Cainte Ad Tracker</div>
+          <div style={{ fontSize:14, color:T.textSec, marginBottom:28 }}>Enter the password to continue</div>
+          <form onSubmit={handleLogin}>
+            <input
+              type="password"
+              value={pwInput}
+              onChange={e => { setPwInput(e.target.value); setPwError(false); }}
+              placeholder="Password"
+              autoFocus
+              style={{ width:"100%", background:T.bg, border:`1.5px solid ${pwError ? T.red : "rgba(60,60,67,0.12)"}`, borderRadius:14, padding:"14px 16px", fontSize:16, color:T.text, outline:"none", fontFamily:"inherit", marginBottom:12, transition:"border-color 0.15s", textAlign:"center", letterSpacing:"0.1em" }}
+            />
+            {pwError && <div style={{ fontSize:13, color:T.red, marginBottom:12 }}>Incorrect password</div>}
+            <button type="submit"
+              style={{ width:"100%", padding:"15px 0", background:T.blue, border:"none", borderRadius:14, color:"#fff", fontSize:16, fontWeight:700, cursor:"pointer", boxShadow:`0 4px 18px ${T.blue}40` }}>
+              Enter
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   // Load all batches from API on mount
   useEffect(() => {
