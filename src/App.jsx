@@ -458,8 +458,9 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
 
   const validate = () => {
     const e = {};
-    if (!form.name.trim())        e.name = "Batch name is required";
-    if (!form.submittedBy.trim()) e.submittedBy = "Please enter your name";
+    if (!form.name.trim()) e.name = "Batch name is required";
+    if (!isTikTok(form.platform) && !form.link.trim()) e.link = "Google Sheet / Drive link is required";
+    if (isTikTok(form.platform) && adRows.every(r => !r.sparkCode.trim())) e.sparkCode = "At least one spark code is required";
     if (adRows.every(r => !r.name.trim())) e.ads = "At least one ad needs a name";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -510,11 +511,11 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
         {/* ── Step 2: Batch info ── */}
         <Field label="Batch Name" value={form.name} onChange={v=>{set("name",v); if(v.trim()) setErrors(e=>({...e,name:null}));}} placeholder="e.g. June Partnership Ads" required error={errors.name} />
         <Field label="Creator / Profile Handle" value={form.creatorHandle} onChange={v=>set("creatorHandle",v)} placeholder="@handle — leave blank if not a partnership" />
-        <Field label="Submitted by" value={form.submittedBy} onChange={v=>{set("submittedBy",v); if(v.trim()) setErrors(e=>({...e,submittedBy:null}));}} placeholder="Your name" required error={errors.submittedBy} />
+        <Field label="Submitted by" value={form.submittedBy} onChange={v=>set("submittedBy",v)} placeholder="Your name" />
 
         {/* ── Step 3: Source — changes by platform ── */}
         {isTikTok(form.platform) ? null : (
-          <Field label="Google Sheet / Drive Link" value={form.link} onChange={v=>set("link",v)} placeholder="https://" />
+          <Field label="Google Sheet / Drive Link" value={form.link} onChange={v=>{set("link",v); if(v.trim()) setErrors(e=>({...e,link:null}));}} placeholder="https://" required error={errors.link} />
         )}
 
         <Field label="Notes for Agency" value={form.notes} onChange={v=>set("notes",v)} placeholder="Context, priorities, geo restrictions…" />
@@ -529,6 +530,7 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
             </div>
           </div>
           {errors.ads && <div style={{ fontSize:12, color:T.red, marginBottom:8 }}>{errors.ads}</div>}
+          {errors.sparkCode && <div style={{ fontSize:12, color:T.red, marginBottom:8 }}>{errors.sparkCode}</div>}
 
           {/* Column headers for TikTok */}
           {isTikTok(form.platform) && (
