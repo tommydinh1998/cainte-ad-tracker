@@ -758,7 +758,7 @@ export default function AdTracker() {
       <div style={{ minHeight:"100vh", background:T.bg, fontFamily:"-apple-system,'SF Pro Display',BlinkMacSystemFont,sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
         <style>{`*{box-sizing:border-box;margin:0;padding:0;} input::placeholder{color:rgba(60,60,67,0.3);}`}</style>
         <div style={{ background:"#fff", borderRadius:22, padding:"40px 36px", width:"100%", maxWidth:380, boxShadow:"0 8px 40px rgba(0,0,0,0.10), 0 0 0 0.5px rgba(0,0,0,0.06)", textAlign:"center" }}>
-          <div style={{ fontSize:36, marginBottom:16 }}>🔒</div>
+          <img src="/avatar.jpg" alt="" style={{ width:88, height:88, borderRadius:"50%", objectFit:"cover", marginBottom:20, boxShadow:"0 4px 16px rgba(0,0,0,0.10)" }} />
           <div style={{ fontSize:22, fontWeight:700, color:T.text, letterSpacing:"-0.025em", marginBottom:8 }}>Cainte Ad Tracker</div>
           <div style={{ fontSize:14, color:T.textSec, marginBottom:28 }}>Enter the password to continue</div>
           <form onSubmit={handleLogin}>
