@@ -495,7 +495,10 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
     <div style={{ position:"fixed",inset:0,zIndex:100,background:"rgba(0,0,0,0.40)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px" }}>
       <div style={{ background:"#FFFFFF",borderRadius:22,width:"100%",maxWidth:560,maxHeight:"90vh",overflowY:"auto",padding:"32px 28px 36px",boxShadow:"0 24px 80px rgba(0,0,0,0.16), 0 0 0 0.5px rgba(0,0,0,0.05)" }}>
 
-        <div style={{ fontSize:24,fontWeight:700,color:T.text,letterSpacing:"-0.025em",marginBottom:6 }}>{isEdit?"Edit Batch":"New Batch"}</div>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:6 }}>
+          <div style={{ fontSize:24,fontWeight:700,color:T.text,letterSpacing:"-0.025em" }}>{isEdit?"Edit Batch":"New Batch"}</div>
+          <button onClick={onClose} style={{ background:"none",border:"none",fontSize:20,color:T.textTert,cursor:"pointer",padding:"2px 6px",lineHeight:1,borderRadius:8,marginTop:-2 }}>✕</button>
+        </div>
         <div style={{ fontSize:14,color:T.textSec,marginBottom:24 }}>{isEdit?"Update details — ad statuses are preserved.":"All ads start as Pending. Agency marks them Live."}</div>
 
         {/* ── Step 1: Platform ── */}
