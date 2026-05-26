@@ -459,6 +459,7 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
   const validate = () => {
     const e = {};
     if (!form.name.trim()) e.name = "Batch name is required";
+    if (!form.creatorHandle.trim()) e.creatorHandle = "Creator / profile handle is required";
     if (!isTikTok(form.platform) && !form.link.trim()) e.link = "Google Sheet / Drive link is required";
     if (isTikTok(form.platform) && adRows.every(r => !r.sparkCode.trim())) e.sparkCode = "At least one spark code is required";
     if (adRows.every(r => !r.name.trim())) e.ads = "At least one ad needs a name";
@@ -510,7 +511,7 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
 
         {/* ── Step 2: Batch info ── */}
         <Field label="Batch Name" value={form.name} onChange={v=>{set("name",v); if(v.trim()) setErrors(e=>({...e,name:null}));}} placeholder="e.g. June Partnership Ads" required error={errors.name} />
-        <Field label="Creator / Profile Handle" value={form.creatorHandle} onChange={v=>set("creatorHandle",v)} placeholder="@handle — leave blank if not a partnership" />
+        <Field label="Creator / Profile Handle" value={form.creatorHandle} onChange={v=>{set("creatorHandle",v); if(v.trim()) setErrors(e=>({...e,creatorHandle:null}));}} placeholder="@handle" required error={errors.creatorHandle} />
         <Field label="Submitted by" value={form.submittedBy} onChange={v=>set("submittedBy",v)} placeholder="Your name" />
 
         {/* ── Step 3: Source — changes by platform ── */}
