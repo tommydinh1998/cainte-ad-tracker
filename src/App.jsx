@@ -299,14 +299,24 @@ const ActionsView = ({ batches, onUpdateAd }) => {
                   <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, flexWrap:"wrap" }}>
                     <Chip color={PLATFORM_CONFIG[batch.platform].color}>{batch.platform}</Chip>
                     <span style={{ fontSize:12, color:T.textSec }}>{batch.name}</span>
+                    {batch.creatorHandle && <span style={{ fontSize:12, color:T.purple, fontWeight:500 }}>{batch.creatorHandle}</span>}
                     <span style={{ fontSize:11, color:T.textTert, fontFamily:"ui-monospace,monospace", marginLeft:"auto" }}>{ad.adId}</span>
                   </div>
                   {/* Ad name */}
                   <div style={{ fontSize:15, fontWeight:600, color:T.text, marginBottom:8, letterSpacing:"-0.01em" }}>{ad.name}</div>
                   {/* Issue note */}
                   {ad.issueNote && (
-                    <div style={{ fontSize:13, color:T.textSec, lineHeight:1.55, marginBottom:14, padding:"10px 12px", background:T.bg, borderRadius:10 }}>
+                    <div style={{ fontSize:13, color:T.textSec, lineHeight:1.55, marginBottom:10, padding:"10px 12px", background:T.bg, borderRadius:10 }}>
                       {ad.issueNote}
+                    </div>
+                  )}
+                  {/* Source */}
+                  {batch.link && (
+                    <div style={{ marginBottom:14 }}>
+                      <a href={batch.link} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize:12, color:T.blue, fontWeight:500, display:"inline-flex", alignItems:"center", gap:5, padding:"5px 10px", background:T.blue+"10", borderRadius:8, textDecoration:"none" }}>
+                        <span>📎</span> View source
+                      </a>
                     </div>
                   )}
                   {/* Actions */}
