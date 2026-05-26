@@ -386,44 +386,69 @@ const Field = ({ label, value, onChange, placeholder, type="text" }) => (
 
 const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
   const isEdit = !!editBatch;
-  const [form, setForm] = useState({ name:editBatch?.name||"", platform:editBatch?.platform||"Meta", link:editBatch?.link||"", notes:editBatch?.notes||"", submittedBy:editBatch?.submittedBy||"", creatorHandle:editBatch?.creatorHandle||"", totalAds:editBatch?.ads.length||1 });
-  const [adNames, setAdNames] = useState(editBatch ? editBatch.ads.map(a=>a.name) : [""]);
+  const isTikTok = (platform) => platform === "TikTok";
+
+  const [form, setForm] = useState({
+    name: editBatch?.name||"",
+    platform: editBatch?.platform||"Meta",
+    link: editBatch?.link||"",
+    notes: editBatch?.notes||"",
+    submittedBy: editBatch?.submittedBy||"",
+    creatorHandle: editBatch?.creatorHandle||"",
+  });
+
+  // Each ad row: { name, sparkCode }
+  const [adRows, setAdRows] = useState(() => {
+    if (editBatch) return editBatch.ads.map(a => ({ name: a.name, sparkCode: a.sparkCode||"" }));
+    return [{ name: "", sparkCode: "" }];
+  });
+
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const handleTotalAdsChange = (val) => {
-    const n = Math.max(1,Math.min(50,Number(val)));
-    set("totalAds",n);
-    setAdNames(prev=>Array.from({length:n},(_,i)=>prev[i]||""));
-  };
+  const addRow    = () => setAdRows(prev => [...prev, { name:"", sparkCode:"" }]);
+  const removeRow = (i) => setAdRows(prev => prev.length > 1 ? prev.filter((_,j)=>j!==i) : prev);
+  const updateRow = (i, field, val) => setAdRows(prev => prev.map((r,j) => j===i ? {...r,[field]:val} : r));
 
   const handleSubmit = () => {
     if (!form.name.trim()) return;
+    const ads = adRows.map((row, i) => {
+      const name = row.name.trim() || `Ad ${i+1}`;
+      // For TikTok store spark code in issueNote temporarily until we add a proper field
+      // Actually store it in the name as "Name — code" if filled, or we use notes
+      const ex = editBatch?.ads[i];
+      return ex
+        ? { ...ex, name, sparkCode: row.sparkCode }
+        : { id:i+1, adId:genAdId(), name, status:"pending", issueNote:"", assignedTo:"", sparkCode: row.sparkCode };
+    });
+
+    // For TikTok: build notes to include all spark codes for agency reference
+    let notes = form.notes;
+    if (isTikTok(form.platform)) {
+      const codes = adRows.filter(r=>r.sparkCode.trim()).map((r,i)=>`${r.name||`Ad ${i+1}`}: ${r.sparkCode.trim()}`);
+      if (codes.length) notes = (notes ? notes + "\n\n" : "") + "Spark codes:\n" + codes.join("\n");
+    }
+
+    const batchData = { ...form, notes, totalAds: ads.length, ads };
+
     if (isEdit) {
-      const updatedAds = Array.from({length:Number(form.totalAds)},(_,i) => {
-        const ex = editBatch.ads[i];
-        return ex ? {...ex,name:adNames[i]?.trim()||ex.name}
-                  : {id:i+1,adId:genAdId(),name:adNames[i]?.trim()||`Ad ${i+1}`,status:"pending",issueNote:"",assignedTo:""};
-      });
-      onSave({...editBatch,...form,totalAds:Number(form.totalAds),ads:updatedAds});
+      onSave({ ...editBatch, ...batchData });
     } else {
-      const ads = Array.from({length:Number(form.totalAds)},(_,i)=>({id:i+1,adId:genAdId(),name:adNames[i]?.trim()||`Ad ${i+1}`,status:"pending",issueNote:"",assignedTo:""}));
-      onAdd({id:nextId++,...form,totalAds:Number(form.totalAds),submittedDate:new Date(),ads});
+      onAdd({ id: nextId++, ...batchData, submittedDate: new Date() });
     }
     onClose();
   };
 
+  const inputStyle = { width:"100%", background:T.bg, border:"1.5px solid rgba(60,60,67,0.1)", borderRadius:12, padding:"13px 15px", color:T.text, fontSize:15, boxSizing:"border-box", outline:"none", fontFamily:"inherit", transition:"border-color 0.15s" };
+  const smallInput = { ...inputStyle, padding:"10px 13px", fontSize:14, borderRadius:10 };
+
   return (
     <div style={{ position:"fixed",inset:0,zIndex:100,background:"rgba(0,0,0,0.40)",backdropFilter:"blur(8px)",WebkitBackdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px 16px" }}>
-      <div style={{ background:"#FFFFFF",borderRadius:22,width:"100%",maxWidth:520,maxHeight:"90vh",overflowY:"auto",padding:"32px 28px 36px",boxShadow:"0 24px 80px rgba(0,0,0,0.16), 0 0 0 0.5px rgba(0,0,0,0.05)" }}>
+      <div style={{ background:"#FFFFFF",borderRadius:22,width:"100%",maxWidth:560,maxHeight:"90vh",overflowY:"auto",padding:"32px 28px 36px",boxShadow:"0 24px 80px rgba(0,0,0,0.16), 0 0 0 0.5px rgba(0,0,0,0.05)" }}>
+
         <div style={{ fontSize:24,fontWeight:700,color:T.text,letterSpacing:"-0.025em",marginBottom:6 }}>{isEdit?"Edit Batch":"New Batch"}</div>
-        <div style={{ fontSize:14,color:T.textSec,marginBottom:28 }}>{isEdit?"Update details — ad statuses are preserved.":"All ads start as Pending. Agency marks them Live."}</div>
+        <div style={{ fontSize:14,color:T.textSec,marginBottom:24 }}>{isEdit?"Update details — ad statuses are preserved.":"All ads start as Pending. Agency marks them Live."}</div>
 
-        <Field label="Batch Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. June Image Ads" />
-        <Field label="Google Sheet Link or Spark Codes" value={form.link} onChange={v=>set("link",v)} placeholder="https://" />
-        <Field label="Creator / Profile Handle" value={form.creatorHandle} onChange={v=>set("creatorHandle",v)} placeholder="@handle — leave blank if not a partnership" />
-        <Field label="Submitted by" value={form.submittedBy} onChange={v=>set("submittedBy",v)} placeholder="Your name" />
-        <Field label="Notes for Agency" value={form.notes} onChange={v=>set("notes",v)} placeholder="Context, priorities, geo restrictions…" />
-
+        {/* ── Step 1: Platform ── */}
         <div style={{ marginBottom:22 }}>
           <div style={{ fontSize:13,fontWeight:600,color:T.textSec,marginBottom:10 }}>Platform</div>
           <div style={{ display:"flex",gap:10 }}>
@@ -434,20 +459,77 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
           </div>
         </div>
 
-        <Field label="Number of Ads" value={String(form.totalAds)} onChange={handleTotalAdsChange} type="number" placeholder="1" />
+        {/* ── Step 2: Batch info ── */}
+        <Field label="Batch Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. June Partnership Ads" />
+        <Field label="Creator / Profile Handle" value={form.creatorHandle} onChange={v=>set("creatorHandle",v)} placeholder="@handle — leave blank if not a partnership" />
+        <Field label="Submitted by" value={form.submittedBy} onChange={v=>set("submittedBy",v)} placeholder="Your name" />
 
+        {/* ── Step 3: Source — changes by platform ── */}
+        {isTikTok(form.platform) ? null : (
+          <Field label="Google Sheet / Drive Link" value={form.link} onChange={v=>set("link",v)} placeholder="https://" />
+        )}
+
+        <Field label="Notes for Agency" value={form.notes} onChange={v=>set("notes",v)} placeholder="Context, priorities, geo restrictions…" />
+
+        {/* ── Step 4: Ads ── */}
         <div style={{ marginBottom:28 }}>
-          <div style={{ fontSize:13,fontWeight:600,color:T.textSec,marginBottom:10 }}>Ad Names <span style={{ color:T.textTert,fontWeight:400 }}>— IDs auto-assigned</span></div>
-          <div style={{ display:"flex",flexDirection:"column",gap:8,maxHeight:220,overflowY:"auto" }}>
-            {adNames.map((name,i)=>(
-              <div key={i} style={{ display:"flex",alignItems:"center",gap:10 }}>
-                <span style={{ fontSize:11,color:T.textTert,fontFamily:"ui-monospace,monospace",flexShrink:0,width:50 }}>#{String(nextAdId+i).padStart(4,"0")}</span>
-                <input value={name} onChange={e=>setAdNames(prev=>prev.map((n,j)=>j===i?e.target.value:n))} placeholder={`Ad ${i+1}`}
-                  style={{ flex:1,background:T.bg,border:"1.5px solid rgba(60,60,67,0.1)",borderRadius:10,padding:"10px 13px",color:T.text,fontSize:14,boxSizing:"border-box",outline:"none",fontFamily:"inherit",transition:"border-color 0.15s" }}
-                  onFocus={e=>e.target.style.borderColor=T.blue} onBlur={e=>e.target.style.borderColor="rgba(60,60,67,0.1)"} />
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+            <div style={{ fontSize:13,fontWeight:600,color:T.textSec }}>
+              {isTikTok(form.platform) ? "Ads & Spark Codes" : "Ads"}
+              <span style={{ color:T.textTert,fontWeight:400 }}> — IDs auto-assigned</span>
+            </div>
+          </div>
+
+          {/* Column headers for TikTok */}
+          {isTikTok(form.platform) && (
+            <div style={{ display:"grid", gridTemplateColumns:"44px 1fr 160px 28px", gap:8, marginBottom:6, paddingLeft:0 }}>
+              <div/>
+              <div style={{ fontSize:11,fontWeight:600,color:T.textTert,textTransform:"uppercase",letterSpacing:"0.06em" }}>Ad Name</div>
+              <div style={{ fontSize:11,fontWeight:600,color:T.textTert,textTransform:"uppercase",letterSpacing:"0.06em" }}>Spark Code</div>
+              <div/>
+            </div>
+          )}
+
+          <div style={{ display:"flex",flexDirection:"column",gap:8,maxHeight:280,overflowY:"auto" }}>
+            {adRows.map((row,i) => (
+              <div key={i} style={{ display:"grid", gridTemplateColumns: isTikTok(form.platform) ? "44px 1fr 160px 28px" : "44px 1fr 28px", gap:8, alignItems:"center" }}>
+                {/* ID */}
+                <span style={{ fontSize:11,color:T.textTert,fontFamily:"ui-monospace,monospace",textAlign:"right",paddingRight:4 }}>
+                  #{String(nextAdId+i).padStart(4,"0")}
+                </span>
+                {/* Ad name */}
+                <input
+                  value={row.name}
+                  onChange={e=>updateRow(i,"name",e.target.value)}
+                  placeholder={`Ad ${i+1}`}
+                  style={smallInput}
+                  onFocus={e=>e.target.style.borderColor=T.blue}
+                  onBlur={e=>e.target.style.borderColor="rgba(60,60,67,0.1)"}
+                />
+                {/* Spark code — TikTok only */}
+                {isTikTok(form.platform) && (
+                  <input
+                    value={row.sparkCode}
+                    onChange={e=>updateRow(i,"sparkCode",e.target.value)}
+                    placeholder="Spark code…"
+                    style={{ ...smallInput, fontFamily:"ui-monospace,monospace", fontSize:12 }}
+                    onFocus={e=>e.target.style.borderColor=PLATFORM_CONFIG.TikTok.color}
+                    onBlur={e=>e.target.style.borderColor="rgba(60,60,67,0.1)"}
+                  />
+                )}
+                {/* Remove */}
+                <button onClick={()=>removeRow(i)} style={{ background:"none",border:"none",color:T.textTert,cursor:"pointer",fontSize:16,padding:0,lineHeight:1,opacity:adRows.length===1?0.2:1 }}>✕</button>
               </div>
             ))}
           </div>
+
+          {/* Add row */}
+          <button onClick={addRow}
+            style={{ marginTop:10,background:"none",border:`1.5px dashed rgba(60,60,67,0.2)`,borderRadius:10,color:T.textSec,fontSize:13,fontWeight:600,cursor:"pointer",padding:"9px 0",width:"100%",transition:"all 0.15s" }}
+            onMouseEnter={e=>e.target.style.borderColor=T.blue}
+            onMouseLeave={e=>e.target.style.borderColor="rgba(60,60,67,0.2)"}>
+            + Add ad
+          </button>
         </div>
 
         <div style={{ display:"flex",gap:10 }}>
