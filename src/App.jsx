@@ -462,7 +462,6 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
     if (!form.creatorHandle.trim()) e.creatorHandle = "Creator / profile handle is required";
     if (!isTikTok(form.platform) && !form.link.trim()) e.link = "Google Sheet / Drive link is required";
     if (isTikTok(form.platform) && adRows.every(r => !r.sparkCode.trim())) e.sparkCode = "At least one spark code is required";
-    if (adRows.every(r => !r.name.trim())) e.ads = "At least one ad needs a name";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -530,10 +529,8 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
             <div style={{ fontSize:13,fontWeight:600,color:T.textSec }}>
               {isTikTok(form.platform) ? "Ads & Spark Codes" : "Ads"}
               <span style={{ color:T.textTert,fontWeight:400 }}> — IDs auto-assigned</span>
-              <span style={{ color:T.red, marginLeft:3 }}>*</span>
             </div>
           </div>
-          {errors.ads && <div style={{ fontSize:12, color:T.red, marginBottom:8 }}>{errors.ads}</div>}
           {errors.sparkCode && <div style={{ fontSize:12, color:T.red, marginBottom:8 }}>{errors.sparkCode}</div>}
 
           {/* Column headers for TikTok */}
