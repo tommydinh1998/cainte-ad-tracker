@@ -460,6 +460,12 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
   const [note, setNote] = useState(creator.ratingNote || "");
   const [savedFlash, setSavedFlash] = useState(false);
 
+  // Editable creator details (name / profile link / platform)
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(creator.name);
+  const [link, setLink] = useState(creator.profileLink || "");
+  const [platform, setPlatform] = useState(creator.platform);
+
   const dirty = rating !== (creator.rating || 0) || note !== (creator.ratingNote || "") ||
     JSON.stringify(tags) !== JSON.stringify(creator.ratingTags || []);
 
@@ -467,6 +473,12 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
   const saveRating = () => {
     onUpdateCreator({ ...creator, rating, ratingTags: tags, ratingNote: note });
     setSavedFlash(true); setTimeout(() => setSavedFlash(false), 1500);
+  };
+
+  const startEdit = () => { setName(creator.name); setLink(creator.profileLink || ""); setPlatform(creator.platform); setEditing(true); };
+  const saveDetails = () => {
+    onUpdateCreator({ ...creator, name: name.trim() || creator.name, profileLink: link.trim(), platform, rating, ratingTags: tags, ratingNote: note });
+    setEditing(false);
   };
 
   const collabs = creator.collaborations || [];
@@ -480,15 +492,32 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
       <div style={{ ...cardStyle, maxWidth: 620 }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 20 }}>
-          <div style={{ width: 54, height: 54, borderRadius: "50%", background: PLATFORM_COLOR[creator.platform] + "22", color: PLATFORM_COLOR[creator.platform], display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, fontWeight: 700, flexShrink: 0 }}>
-            {initials(creator.name)}
+          <div style={{ width: 54, height: 54, borderRadius: "50%", background: PLATFORM_COLOR[editing ? platform : creator.platform] + "22", color: PLATFORM_COLOR[editing ? platform : creator.platform], display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, fontWeight: 700, flexShrink: 0 }}>
+            {initials(editing ? name : creator.name)}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 22, fontWeight: 700, color: T.text, letterSpacing: "-0.02em" }}>{creator.name}</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5, flexWrap: "wrap" }}>
-              <Chip color={PLATFORM_COLOR[creator.platform]}>{creator.platform}</Chip>
-              {creator.profileLink && <a href={creator.profileLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.blue, wordBreak: "break-all" }}>{creator.profileLink}</a>}
-            </div>
+            {editing ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <input value={name} onChange={e => setName(e.target.value)} placeholder="Influencer name" autoFocus style={{ ...smallInput, fontSize: 17, fontWeight: 700 }} {...focusBlue} />
+                <input value={link} onChange={e => setLink(e.target.value)} placeholder="Profile link" style={smallInput} {...focusBlue} />
+                <Segmented options={PLATFORMS} value={platform} onChange={setPlatform} colorFor={p => PLATFORM_COLOR[p]} />
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button onClick={() => setEditing(false)} style={{ padding: "7px 16px", borderRadius: 99, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: T.pillBg, color: T.textSec }}>Cancel</button>
+                  <button onClick={saveDetails} style={{ padding: "7px 16px", borderRadius: 99, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: T.blue, color: "#fff" }}>Save details</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: T.text, letterSpacing: "-0.02em" }}>{creator.name}</div>
+                  <button onClick={startEdit} title="Edit details" style={{ background: "none", border: "none", fontSize: 13, cursor: "pointer", padding: "2px 4px", lineHeight: 1, opacity: 0.75 }}>✏️</button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5, flexWrap: "wrap" }}>
+                  <Chip color={PLATFORM_COLOR[creator.platform]}>{creator.platform}</Chip>
+                  {creator.profileLink && <a href={creator.profileLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.blue, wordBreak: "break-all" }}>{creator.profileLink}</a>}
+                </div>
+              </>
+            )}
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: T.textTert, cursor: "pointer", padding: "2px 6px", lineHeight: 1 }}>✕</button>
         </div>
