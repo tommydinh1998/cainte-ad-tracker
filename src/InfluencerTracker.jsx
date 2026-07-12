@@ -744,7 +744,7 @@ export default function InfluencerTracker() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
               <div style={{ fontSize: 13, color: T.textSec }}>Shared list of potential creators to contact.</div>
               <button onClick={() => setShowSourcingModal(true)}
-                style={{ background: T.blue + "18", border: "none", borderRadius: 99, color: T.blue, fontSize: 13, fontWeight: 600, padding: "8px 16px", cursor: "pointer" }}>+ Save Profile</button>
+                style={{ background: T.blue + "18", border: "none", borderRadius: 99, color: T.blue, fontSize: 13, fontWeight: 600, padding: "8px 16px", cursor: "pointer" }}>+ Add Potential Influencer</button>
             </div>
 
             {sourcing.length === 0 ? (
