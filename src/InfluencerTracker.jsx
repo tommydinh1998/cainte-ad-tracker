@@ -23,6 +23,15 @@ const RATING_TAGS = ["Easy to work with", "Delivers on time", "Good performance"
 
 const kr = (n) => `${Number(n || 0).toLocaleString("da-DK")} kr`;
 const initials = (name) => (name || "?").trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+
+const MAX_FILE_MB = 10;
+const fmtSize = (b) => b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
+const fileToStaged = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve({ name: file.name, type: file.type || "application/octet-stream", size: file.size, dataBase64: String(reader.result).split(",")[1] || "" });
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
 const platformMatch = (creatorPlatform, filter) =>
   filter === "All" || creatorPlatform === filter ||
   (creatorPlatform === "Both" && (filter === "Meta" || filter === "TikTok"));
@@ -145,11 +154,64 @@ const CollabFields = ({ collab, patch }) => {
         <input value={collab.responsible || ""} onChange={e => patch({ responsible: e.target.value })} placeholder="Employee name" style={smallInput} {...focusBlue} />
       </div>
 
-      <div style={{ marginBottom: 4 }}>
+      <div style={{ marginBottom: 20 }}>
         <FormLabel>Notes</FormLabel>
-        <textarea value={collab.notes || ""} onChange={e => patch({ notes: e.target.value })} rows={3} placeholder="Agreements, comments…" style={textareaStyle} {...focusBlue} />
+        <textarea value={collab.notes || ""} onChange={e => patch({ notes: e.target.value })} rows={3} placeholder="Comments…" style={textareaStyle} {...focusBlue} />
       </div>
+
+      <AttachmentsField collab={collab} patch={patch} />
     </>
+  );
+};
+
+// ── Attachments editor (agreements / contracts) ───────────────────────────────
+const AttachmentsField = ({ collab, patch }) => {
+  const existing = collab.attachments || [];
+  const staged = collab._newFiles || [];
+
+  const onPick = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    const tooBig = files.find(f => f.size > MAX_FILE_MB * 1048576);
+    if (tooBig) { alert(`"${tooBig.name}" is ${fmtSize(tooBig.size)} — max ${MAX_FILE_MB} MB per file.`); return; }
+    const added = await Promise.all(files.map(fileToStaged));
+    patch({ _newFiles: [...staged, ...added] });
+  };
+  const removeStaged = (i) => patch({ _newFiles: staged.filter((_, j) => j !== i) });
+  const deleteExisting = async (id) => {
+    patch({ attachments: existing.filter(a => a.id !== id) });
+    await fetch(`/api/files/${id}`, { method: "DELETE" });
+  };
+
+  const row = { display: "flex", alignItems: "center", gap: 8, background: T.bg, borderRadius: 9, padding: "8px 11px", marginBottom: 6 };
+
+  return (
+    <div style={{ marginBottom: 4 }}>
+      <FormLabel>Attachments <span style={{ color: T.textTert, fontWeight: 400 }}>— agreements, contracts</span></FormLabel>
+
+      {existing.map(a => (
+        <div key={a.id} style={row}>
+          <span style={{ fontSize: 15 }}>📎</span>
+          <a href={`/api/files/${a.id}`} target="_blank" rel="noopener noreferrer" style={{ flex: 1, minWidth: 0, fontSize: 13, color: T.blue, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.filename}</a>
+          <span style={{ fontSize: 11, color: T.textTert, flexShrink: 0 }}>{fmtSize(a.size)}</span>
+          <button onClick={() => deleteExisting(a.id)} style={{ background: "none", border: "none", color: T.textTert, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 0 }}>✕</button>
+        </div>
+      ))}
+
+      {staged.map((f, i) => (
+        <div key={i} style={row}>
+          <span style={{ fontSize: 15 }}>📎</span>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+          <span style={{ fontSize: 11, color: T.green, flexShrink: 0 }}>ready</span>
+          <button onClick={() => removeStaged(i)} style={{ background: "none", border: "none", color: T.textTert, cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 0 }}>✕</button>
+        </div>
+      ))}
+
+      <label style={{ display: "inline-block", marginTop: 4, background: "none", border: `1.5px dashed rgba(60,60,67,0.2)`, borderRadius: 10, color: T.blue, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "9px 16px" }}>
+        + Attach file
+        <input type="file" multiple onChange={onPick} style={{ display: "none" }} />
+      </label>
+    </div>
   );
 };
 
@@ -164,10 +226,11 @@ const cleanCollab = (c) => {
     totalValue: Number(c.totalValue) || 0,
     responsible: (c.responsible || "").trim(),
     notes: (c.notes || "").trim(),
+    _newFiles: c._newFiles || [],   // staged uploads — stripped before hitting the API
   };
 };
 
-const blankCollab = () => ({ type: "Gifting", status: "upcoming", deliverables: [], products: [{ name: "", qty: 1 }], productCount: 0, totalValue: 0, responsible: "", notes: "" });
+const blankCollab = () => ({ type: "Gifting", status: "upcoming", deliverables: [], products: [{ name: "", qty: 1 }], productCount: 0, totalValue: 0, responsible: "", notes: "", attachments: [], _newFiles: [] });
 
 // ── Add Influencer modal (creator + first collaboration) ──────────────────────
 const InfluencerModal = ({ onClose, onAdd }) => {
@@ -360,6 +423,18 @@ const CollabCard = ({ creator, collab, showCreator, onStatus, onEdit, onDelete, 
 
         {collab.notes && <div style={{ fontSize: 12, color: T.text, lineHeight: 1.5, marginBottom: 8, padding: "8px 11px", background: T.bg, borderRadius: 9 }}>{collab.notes}</div>}
 
+        {/* attachments */}
+        {collab.attachments?.length > 0 && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            {collab.attachments.map(a => (
+              <a key={a.id} href={`/api/files/${a.id}`} target="_blank" rel="noopener noreferrer"
+                style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: T.blue, background: T.blue + "10", borderRadius: 8, padding: "4px 10px", textDecoration: "none", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                📎 {a.filename}
+              </a>
+            ))}
+          </div>
+        )}
+
         {/* bottom row: responsible + status */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 2 }}>
           {collab.responsible && <span style={{ fontSize: 11, color: T.textSec }}>👤 {collab.responsible}</span>}
@@ -508,10 +583,26 @@ export default function InfluencerTracker() {
   }, []);
 
   // ── Creator/collab handlers ──
+  const reload = async () => {
+    const cr = await fetch("/api/creators").then(r => r.json());
+    setCreators(cr);
+  };
+  const uploadFiles = async (collabId, files) => {
+    for (const f of files) {
+      await fetch(`/api/collaborations/${collabId}/files`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: f.name, mimetype: f.type, dataBase64: f.dataBase64 }),
+      });
+    }
+  };
+
   const handleAddInfluencer = async (payload) => {
-    const res = await fetch("/api/creators", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const { _newFiles = [], ...collabData } = payload.collaboration || {};
+    const res = await fetch("/api/creators", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, collaboration: collabData }) });
     const saved = await res.json();
     setCreators(prev => [saved, ...prev]);
+    const newCollabId = saved.collaborations?.[0]?.id;
+    if (_newFiles.length && newCollabId) { await uploadFiles(newCollabId, _newFiles); await reload(); }
   };
 
   const handleUpdateCreator = async (creator) => {
@@ -526,15 +617,20 @@ export default function InfluencerTracker() {
   };
 
   const handleAddCollab = async (creatorId, collab) => {
-    const res = await fetch(`/api/creators/${creatorId}/collaborations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collab) });
+    const { _newFiles = [], ...collabData } = collab;
+    const res = await fetch(`/api/creators/${creatorId}/collaborations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collabData) });
     const saved = await res.json();
     setCreators(prev => prev.map(c => c.id !== creatorId ? c : { ...c, collaborations: [saved, ...(c.collaborations || [])] }));
+    if (_newFiles.length && saved.id) { await uploadFiles(saved.id, _newFiles); await reload(); }
   };
 
   const handleUpdateCollab = async (creatorId, collab) => {
-    const res = await fetch(`/api/collaborations/${collab.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collab) });
+    const { _newFiles = [], ...collabData } = collab;
+    const res = await fetch(`/api/collaborations/${collab.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collabData) });
     const saved = await res.json();
-    setCreators(prev => prev.map(c => c.id !== creatorId ? c : { ...c, collaborations: c.collaborations.map(co => co.id !== collab.id ? co : { ...co, ...saved }) }));
+    // preserve existing attachments (PUT response carries none) until a reload refreshes them
+    setCreators(prev => prev.map(c => c.id !== creatorId ? c : { ...c, collaborations: c.collaborations.map(co => co.id !== collab.id ? co : { ...co, ...saved, attachments: co.attachments || [] }) }));
+    if (_newFiles.length) { await uploadFiles(collab.id, _newFiles); await reload(); }
   };
 
   const handleCollabStatus = async (creatorId, collabId, status) => {

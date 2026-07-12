@@ -5,7 +5,7 @@ const path = require('path');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 
 const isLocalDB = /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL || '');
 const pool = new Pool({
@@ -69,6 +69,15 @@ async function initDB() {
       platform TEXT DEFAULT 'Meta',
       comment TEXT DEFAULT '',
       added_by TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS attachments (
+      id SERIAL PRIMARY KEY,
+      collab_id INTEGER REFERENCES collaborations(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      mimetype TEXT DEFAULT 'application/octet-stream',
+      size INTEGER DEFAULT 0,
+      data BYTEA,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
@@ -198,7 +207,15 @@ app.patch('/api/ads/:id', async (req, res) => {
 });
 
 // ── Influencer Tracker ────────────────────────────────────────────────────────
-const mapCollab = (c) => ({
+const mapAttachment = (a) => ({
+  id:       a.id,
+  collabId: a.collab_id,
+  filename: a.filename,
+  mimetype: a.mimetype,
+  size:     a.size || 0,
+});
+
+const mapCollab = (c, attachments = []) => ({
   id:           c.id,
   creatorId:    c.creator_id,
   type:         c.type,
@@ -209,11 +226,12 @@ const mapCollab = (c) => ({
   totalValue:   c.total_value != null ? Number(c.total_value) : 0,
   responsible:  c.responsible || '',
   notes:        c.notes || '',
+  attachments:  attachments.filter(a => a.collab_id === c.id).map(mapAttachment),
   createdAt:    c.created_at,
   updatedAt:    c.updated_at,
 });
 
-const mapCreator = (cr, collabs) => ({
+const mapCreator = (cr, collabs, attachments = []) => ({
   id:            cr.id,
   name:          cr.name,
   profileLink:   cr.profile_link,
@@ -222,7 +240,7 @@ const mapCreator = (cr, collabs) => ({
   ratingTags:    cr.rating_tags || [],
   ratingNote:    cr.rating_note || '',
   createdAt:     cr.created_at,
-  collaborations: collabs.filter(c => c.creator_id === cr.id).map(mapCollab),
+  collaborations: collabs.filter(c => c.creator_id === cr.id).map(c => mapCollab(c, attachments)),
 });
 
 const mapSourcing = (s) => ({
@@ -260,7 +278,9 @@ app.get('/api/creators', async (req, res) => {
   try {
     const crRes = await pool.query('SELECT * FROM creators ORDER BY created_at DESC');
     const coRes = await pool.query('SELECT * FROM collaborations ORDER BY created_at DESC');
-    res.json(crRes.rows.map(cr => mapCreator(cr, coRes.rows)));
+    // Attachment metadata only (never the file bytes) — bytes are streamed via /api/files/:id
+    const atRes = await pool.query('SELECT id, collab_id, filename, mimetype, size FROM attachments ORDER BY created_at ASC');
+    res.json(crRes.rows.map(cr => mapCreator(cr, coRes.rows, atRes.rows)));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
@@ -342,6 +362,39 @@ app.patch('/api/collaborations/:id', async (req, res) => {
 app.delete('/api/collaborations/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM collaborations WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Attachments (agreements / contracts) ──────────────────────────────────────
+app.post('/api/collaborations/:id/files', async (req, res) => {
+  const { filename, mimetype, dataBase64 } = req.body;
+  if (!filename || !dataBase64) return res.status(400).json({ error: 'filename and dataBase64 are required' });
+  try {
+    const buf = Buffer.from(dataBase64, 'base64');
+    const r = await pool.query(
+      `INSERT INTO attachments (collab_id, filename, mimetype, size, data)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id, collab_id, filename, mimetype, size`,
+      [req.params.id, filename, mimetype || 'application/octet-stream', buf.length, buf]
+    );
+    res.json(mapAttachment(r.rows[0]));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/files/:id', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT filename, mimetype, data FROM attachments WHERE id=$1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'not found' });
+    const f = r.rows[0];
+    res.setHeader('Content-Type', f.mimetype || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(f.filename)}"`);
+    res.send(f.data);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/files/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM attachments WHERE id=$1', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
