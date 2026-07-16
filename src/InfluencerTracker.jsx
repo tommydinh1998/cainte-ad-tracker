@@ -6,8 +6,11 @@ const today = new Date();
 const PLATFORMS = ["Meta", "TikTok", "Both", "Other"];
 const PLATFORM_COLOR = { Meta: "#007AFF", TikTok: "#FF2D55", Both: "#AF52DE", Other: "#8E8E93" };
 
-const TYPES = ["Gifting", "Paid", "Affiliate", "Ambassador", "Other"];
-const TYPE_COLOR = { Gifting: T.purple, Paid: T.blue, Affiliate: T.teal, Ambassador: T.orange, Other: "#8E8E93" };
+const TYPES = ["Gifting", "Paid", "Affiliate", "Ambassador", "Ongoing", "Other"];
+const TYPE_COLOR = { Gifting: T.purple, Paid: T.blue, Affiliate: T.teal, Ambassador: T.orange, Ongoing: "#5856D6", Other: "#8E8E93" };
+
+const GENDERS = ["Woman", "Man"];
+const GENDER_COLOR = { Woman: "#FF2D55", Man: "#007AFF" };
 
 const DELIVERABLES = ["Reel", "Story", "TikTok Video", "Post", "UGC", "Other"];
 
@@ -237,13 +240,14 @@ const InfluencerModal = ({ onClose, onAdd }) => {
   const [name, setName] = useState("");
   const [profileLink, setProfileLink] = useState("");
   const [platform, setPlatform] = useState("Meta");
+  const [gender, setGender] = useState("");
   const [collab, setCollab] = useState(blankCollab);
   const [errName, setErrName] = useState(false);
   const patch = (o) => setCollab(c => ({ ...c, ...o }));
 
   const submit = () => {
     if (!name.trim()) { setErrName(true); return; }
-    onAdd({ name: name.trim(), profileLink: profileLink.trim(), platform, collaboration: cleanCollab(collab) });
+    onAdd({ name: name.trim(), profileLink: profileLink.trim(), platform, gender, collaboration: cleanCollab(collab) });
     onClose();
   };
 
@@ -259,9 +263,14 @@ const InfluencerModal = ({ onClose, onAdd }) => {
         <Field label="Influencer name" value={name} onChange={v => { setName(v); if (v.trim()) setErrName(false); }} placeholder="e.g. Jane Doe" required error={errName ? "Name is required" : null} />
         <Field label="Profile link" value={profileLink} onChange={setProfileLink} placeholder="https://instagram.com/…" />
 
-        <div style={{ marginBottom: 24 }}>
+        <div style={{ marginBottom: 20 }}>
           <FormLabel>Platform</FormLabel>
           <Segmented options={PLATFORMS} value={platform} onChange={setPlatform} colorFor={p => PLATFORM_COLOR[p]} />
+        </div>
+
+        <div style={{ marginBottom: 24 }}>
+          <FormLabel>Gender <span style={{ color: T.textTert, fontWeight: 400 }}>— for product insights</span></FormLabel>
+          <Segmented options={GENDERS} value={gender} onChange={setGender} colorFor={g => GENDER_COLOR[g]} />
         </div>
 
         <div style={{ height: 1, background: T.border, margin: "4px 0 22px" }} />
@@ -453,6 +462,33 @@ const StatCard = ({ label, value, color }) => (
   </div>
 );
 
+// ── Budget progress bar ───────────────────────────────────────────────────────
+const BudgetBar = ({ label, spent, budget }) => {
+  const pct = budget > 0 ? (spent / budget) * 100 : 0;
+  const over = budget > 0 && spent > budget;
+  const barColor = over ? T.red : pct > 80 ? T.orange : T.green;
+  const remaining = budget - spent;
+  return (
+    <div style={{ marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{label}</span>
+        <span style={{ fontSize: 13, color: T.textSec }}>
+          <span style={{ color: T.text, fontWeight: 600 }}>{kr(spent)}</span>
+          {budget > 0 && <> / {kr(budget)} · <span style={{ color: barColor, fontWeight: 600 }}>{Math.round(pct)}%</span></>}
+        </span>
+      </div>
+      <div style={{ height: 8, borderRadius: 99, background: "rgba(60,60,67,0.10)", overflow: "hidden" }}>
+        <div style={{ width: `${Math.min(100, pct)}%`, height: "100%", background: barColor, borderRadius: 99, transition: "width 0.4s ease" }} />
+      </div>
+      {budget > 0 && (
+        <div style={{ fontSize: 11, color: over ? T.red : T.textTert, marginTop: 5 }}>
+          {over ? `${kr(-remaining)} over budget` : `${kr(remaining)} remaining`}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Creator profile ───────────────────────────────────────────────────────────
 const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEditCollab, onCollabStatus, onDeleteCollab, onDeleteCreator }) => {
   const [rating, setRating] = useState(creator.rating || 0);
@@ -460,11 +496,12 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
   const [note, setNote] = useState(creator.ratingNote || "");
   const [savedFlash, setSavedFlash] = useState(false);
 
-  // Editable creator details (name / profile link / platform)
+  // Editable creator details (name / profile link / platform / gender)
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(creator.name);
   const [link, setLink] = useState(creator.profileLink || "");
   const [platform, setPlatform] = useState(creator.platform);
+  const [gender, setGender] = useState(creator.gender || "");
 
   const dirty = rating !== (creator.rating || 0) || note !== (creator.ratingNote || "") ||
     JSON.stringify(tags) !== JSON.stringify(creator.ratingTags || []);
@@ -475,9 +512,9 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
     setSavedFlash(true); setTimeout(() => setSavedFlash(false), 1500);
   };
 
-  const startEdit = () => { setName(creator.name); setLink(creator.profileLink || ""); setPlatform(creator.platform); setEditing(true); };
+  const startEdit = () => { setName(creator.name); setLink(creator.profileLink || ""); setPlatform(creator.platform); setGender(creator.gender || ""); setEditing(true); };
   const saveDetails = () => {
-    onUpdateCreator({ ...creator, name: name.trim() || creator.name, profileLink: link.trim(), platform, rating, ratingTags: tags, ratingNote: note });
+    onUpdateCreator({ ...creator, name: name.trim() || creator.name, profileLink: link.trim(), platform, gender, rating, ratingTags: tags, ratingNote: note });
     setEditing(false);
   };
 
@@ -501,6 +538,7 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
                 <input value={name} onChange={e => setName(e.target.value)} placeholder="Influencer name" autoFocus style={{ ...smallInput, fontSize: 17, fontWeight: 700 }} {...focusBlue} />
                 <input value={link} onChange={e => setLink(e.target.value)} placeholder="Profile link" style={smallInput} {...focusBlue} />
                 <Segmented options={PLATFORMS} value={platform} onChange={setPlatform} colorFor={p => PLATFORM_COLOR[p]} />
+                <Segmented options={GENDERS} value={gender} onChange={setGender} colorFor={g => GENDER_COLOR[g]} />
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                   <button onClick={() => setEditing(false)} style={{ padding: "7px 16px", borderRadius: 99, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: T.pillBg, color: T.textSec }}>Cancel</button>
                   <button onClick={saveDetails} style={{ padding: "7px 16px", borderRadius: 99, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: T.blue, color: "#fff" }}>Save details</button>
@@ -514,6 +552,7 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5, flexWrap: "wrap" }}>
                   <Chip color={PLATFORM_COLOR[creator.platform]}>{creator.platform}</Chip>
+                  {creator.gender && <Chip color={GENDER_COLOR[creator.gender]}>{creator.gender}</Chip>}
                   {creator.profileLink && <a href={creator.profileLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.blue, wordBreak: "break-all" }}>{creator.profileLink}</a>}
                 </div>
               </>
@@ -586,6 +625,9 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
 export default function InfluencerTracker() {
   const [creators, setCreators] = useState([]);
   const [sourcing, setSourcing] = useState([]);
+  const [monthlyBudget, setMonthlyBudget] = useState(0);
+  const [editingBudget, setEditingBudget] = useState(false);
+  const [budgetInput, setBudgetInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("dashboard");
 
@@ -602,14 +644,23 @@ export default function InfluencerTracker() {
   const [fType, setFType] = useState("All");
   const [fDate, setFDate] = useState("All");
   const [fResp, setFResp] = useState("All");
+  const [fStars, setFStars] = useState("All");
 
   useEffect(() => {
     Promise.all([
       fetch("/api/creators").then(r => r.json()),
       fetch("/api/sourcing").then(r => r.json()),
-    ]).then(([cr, so]) => { setCreators(cr); setSourcing(so); setLoading(false); })
+      fetch("/api/settings").then(r => r.json()),
+    ]).then(([cr, so, st]) => { setCreators(cr); setSourcing(so); setMonthlyBudget(st.monthlyBudget || 0); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
+
+  const saveBudget = async () => {
+    const val = Number(budgetInput) || 0;
+    setMonthlyBudget(val);
+    setEditingBudget(false);
+    await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ monthlyBudget: val }) });
+  };
 
   // ── Creator/collab handlers ──
   const reload = async () => {
@@ -635,7 +686,7 @@ export default function InfluencerTracker() {
   };
 
   const handleUpdateCreator = async (creator) => {
-    setCreators(prev => prev.map(c => c.id !== creator.id ? c : { ...c, name: creator.name, profileLink: creator.profileLink, platform: creator.platform, rating: creator.rating, ratingTags: creator.ratingTags, ratingNote: creator.ratingNote }));
+    setCreators(prev => prev.map(c => c.id !== creator.id ? c : { ...c, name: creator.name, profileLink: creator.profileLink, platform: creator.platform, gender: creator.gender, rating: creator.rating, ratingTags: creator.ratingTags, ratingNote: creator.ratingNote }));
     await fetch(`/api/creators/${creator.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(creator) });
   };
 
@@ -699,6 +750,33 @@ export default function InfluencerTracker() {
   const giftingCount = allCollabs.filter(x => x.collab.type === "Gifting").length;
   const paidCount = allCollabs.filter(x => x.collab.type === "Paid").length;
 
+  // Budget spend — Paid collaborations only, excl. cancelled, by createdAt
+  const curMonth = today.getMonth(), curYear = today.getFullYear();
+  const paidSpend = (pred) => allCollabs
+    .filter(x => x.collab.type === "Paid" && x.collab.status !== "cancelled" && pred(new Date(x.collab.createdAt)))
+    .reduce((s, x) => s + (Number(x.collab.totalValue) || 0), 0);
+  const spentMonth = paidSpend(d => d.getMonth() === curMonth && d.getFullYear() === curYear);
+  const spentYear = paidSpend(d => d.getFullYear() === curYear);
+  const yearlyBudget = monthlyBudget * 12;
+
+  // Top 10 profiles by number of collaborations
+  const topCreators = creators
+    .map(cr => ({ cr, count: (cr.collaborations || []).length, value: (cr.collaborations || []).reduce((s, c) => s + (Number(c.totalValue) || 0), 0) }))
+    .filter(x => x.count > 0)
+    .sort((a, b) => b.count - a.count || b.value - a.value)
+    .slice(0, 10);
+
+  // Top 5 most-sent products, split by creator gender
+  const topProducts = (g) => {
+    const tally = {};
+    creators.filter(cr => cr.gender === g).forEach(cr =>
+      (cr.collaborations || []).forEach(co =>
+        (co.products || []).forEach(p => { if (p.name) tally[p.name] = (tally[p.name] || 0) + (Number(p.qty) || 0); })));
+    return Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  };
+  const topWomenProducts = topProducts("Woman");
+  const topMenProducts = topProducts("Man");
+
   const responsibles = Array.from(new Set(allCollabs.map(x => x.collab.responsible).filter(Boolean))).sort();
 
   const dateOk = (createdAt) => {
@@ -720,9 +798,12 @@ export default function InfluencerTracker() {
   });
 
   const filteredCreators = creators.filter(cr => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return cr.name.toLowerCase().includes(q) || (cr.profileLink || "").toLowerCase().includes(q);
+    if (fStars !== "All" && (cr.rating || 0) !== Number(fStars)) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!(cr.name.toLowerCase().includes(q) || (cr.profileLink || "").toLowerCase().includes(q))) return false;
+    }
+    return true;
   });
 
   const profileCreator = creators.find(c => c.id === profileId) || null;
@@ -777,6 +858,39 @@ export default function InfluencerTracker() {
         {/* ── DASHBOARD ── */}
         {activeTab === "dashboard" && (
           <>
+            {/* Budget overview */}
+            <div style={{ background: T.card, borderRadius: 14, border: `1px solid ${T.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "18px 20px", marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                <Label>Budget</Label>
+                {!editingBudget && (
+                  <button onClick={() => { setBudgetInput(monthlyBudget ? String(monthlyBudget) : ""); setEditingBudget(true); }}
+                    style={{ background: T.pillBg, border: "none", borderRadius: 99, color: T.blue, fontSize: 12, fontWeight: 600, padding: "5px 12px", cursor: "pointer" }}>
+                    {monthlyBudget > 0 ? "Edit budget" : "Set budget"}
+                  </button>
+                )}
+              </div>
+              {editingBudget && (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, color: T.textSec }}>Monthly budget</span>
+                  <div style={{ position: "relative" }}>
+                    <input type="number" min="0" value={budgetInput} onChange={e => setBudgetInput(e.target.value)} placeholder="0" autoFocus
+                      style={{ ...smallInput, width: 170, paddingRight: 34 }} {...focusBlue} />
+                    <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: T.textTert }}>kr</span>
+                  </div>
+                  <button onClick={saveBudget} style={{ padding: "8px 16px", borderRadius: 99, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: T.blue, color: "#fff" }}>Save</button>
+                  <button onClick={() => setEditingBudget(false)} style={{ padding: "8px 16px", borderRadius: 99, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: T.pillBg, color: T.textSec }}>Cancel</button>
+                  <span style={{ fontSize: 12, color: T.textTert }}>Yearly is calculated as ×12</span>
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 260px" }}><BudgetBar label="This month" spent={spentMonth} budget={monthlyBudget} /></div>
+                <div style={{ flex: "1 1 260px" }}><BudgetBar label="This year" spent={spentYear} budget={yearlyBudget} /></div>
+              </div>
+              {monthlyBudget === 0 && !editingBudget && (
+                <div style={{ fontSize: 12, color: T.textTert, marginTop: 12 }}>Set a monthly budget to track spend against it. Spend counts Paid collaborations only.</div>
+              )}
+            </div>
+
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
               <StatCard label="Upcoming" value={countStatus("upcoming")} color={T.blue} />
               <StatCard label="In Progress" value={countStatus("in_progress")} color={T.orange} />
@@ -784,6 +898,55 @@ export default function InfluencerTracker() {
               <StatCard label="Active creators" value={activeCreators} />
               <StatCard label="Gifting" value={giftingCount} color={T.purple} />
               <StatCard label="Paid" value={paidCount} color={T.blue} />
+            </div>
+
+            {/* Top 10 profiles + Top 5 products */}
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24, alignItems: "flex-start" }}>
+              {/* Top 10 profiles */}
+              <div style={{ flex: "1 1 320px", background: T.card, borderRadius: 14, border: `1px solid ${T.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "16px 18px" }}>
+                <div style={{ marginBottom: 12 }}><Label>Top 10 profiles <span style={{ color: T.textTert, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>· by collaborations</span></Label></div>
+                {topCreators.length === 0 ? (
+                  <div style={{ fontSize: 13, color: T.textSec, padding: "8px 0" }}>No collaborations yet.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    {topCreators.map(({ cr, count, value }, i) => (
+                      <button key={cr.id} onClick={() => setProfileId(cr.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, background: "none", border: "none", borderRadius: 8, padding: "7px 6px", cursor: "pointer", textAlign: "left", width: "100%" }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: T.textTert, width: 20, flexShrink: 0 }}>{i + 1}</span>
+                        <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cr.name}</span>
+                        {cr.rating > 0 && <StarRating value={cr.rating} size={11} readOnly />}
+                        <span style={{ fontSize: 12, color: T.textSec, flexShrink: 0 }}>{count} collab{count !== 1 ? "s" : ""}</span>
+                        {value > 0 && <span style={{ fontSize: 11, color: T.textTert, flexShrink: 0, minWidth: 64, textAlign: "right" }}>{kr(value)}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Top 5 products by gender */}
+              <div style={{ flex: "1 1 320px", background: T.card, borderRadius: 14, border: `1px solid ${T.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "16px 18px" }}>
+                <div style={{ marginBottom: 12 }}><Label>Top 5 products sent</Label></div>
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                  {[["Woman", topWomenProducts], ["Man", topMenProducts]].map(([g, list]) => (
+                    <div key={g} style={{ flex: "1 1 130px", minWidth: 120 }}>
+                      <div style={{ marginBottom: 8 }}><Chip color={GENDER_COLOR[g]}>{g === "Woman" ? "Women" : "Men"}</Chip></div>
+                      {list.length === 0 ? (
+                        <div style={{ fontSize: 12, color: T.textTert }}>No data yet</div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {list.map(([name, qty], i) => (
+                            <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                              <span style={{ color: T.textTert, width: 14, flexShrink: 0 }}>{i + 1}</span>
+                              <span style={{ flex: 1, minWidth: 0, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                              <span style={{ color: T.textSec, fontWeight: 600, flexShrink: 0 }}>×{qty}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {/* Filters */}
@@ -824,10 +987,23 @@ export default function InfluencerTracker() {
         {/* ── INFLUENCERS ── */}
         {activeTab === "influencers" && (
           <>
-            <div style={{ position: "relative", marginBottom: 20, maxWidth: 340 }}>
-              <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: T.textTert, pointerEvents: "none" }}>🔍</span>
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search creators…"
-                style={{ width: "100%", background: T.inputBg, border: "none", borderRadius: 12, padding: "10px 14px 10px 36px", color: T.text, fontSize: 14, outline: "none", fontFamily: "inherit" }} />
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
+              <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 340 }}>
+                <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: T.textTert, pointerEvents: "none" }}>🔍</span>
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search creators…"
+                  style={{ width: "100%", background: T.inputBg, border: "none", borderRadius: 12, padding: "10px 14px 10px 36px", color: T.text, fontSize: 14, outline: "none", fontFamily: "inherit" }} />
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                {["All", "5", "4", "3", "2", "1"].map(s => {
+                  const active = fStars === s;
+                  return (
+                    <button key={s} onClick={() => setFStars(s)}
+                      style={{ padding: "7px 12px", borderRadius: 99, border: "none", cursor: "pointer", fontSize: 13, fontWeight: active ? 700 : 500, background: active ? T.text : T.pillBg, color: active ? "#fff" : T.textSec, transition: "all 0.15s" }}>
+                      {s === "All" ? "All" : `${s}★`}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {filteredCreators.length === 0 ? (

@@ -85,6 +85,15 @@ async function initDB() {
   await pool.query(`
     ALTER TABLE ads ADD COLUMN IF NOT EXISTS spark_code TEXT DEFAULT '';
   `);
+  // Influencer gender (for the men/women product split) + app settings (budget)
+  await pool.query(`
+    ALTER TABLE creators ADD COLUMN IF NOT EXISTS gender TEXT DEFAULT '';
+    CREATE TABLE IF NOT EXISTS app_settings (
+      id INTEGER PRIMARY KEY,
+      monthly_budget NUMERIC DEFAULT 0
+    );
+    INSERT INTO app_settings (id, monthly_budget) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;
+  `);
   console.log('DB ready');
 }
 
@@ -236,6 +245,7 @@ const mapCreator = (cr, collabs, attachments = []) => ({
   name:          cr.name,
   profileLink:   cr.profile_link,
   platform:      cr.platform,
+  gender:        cr.gender || '',
   rating:        cr.rating || 0,
   ratingTags:    cr.rating_tags || [],
   ratingNote:    cr.rating_note || '',
@@ -285,13 +295,13 @@ app.get('/api/creators', async (req, res) => {
 });
 
 app.post('/api/creators', async (req, res) => {
-  const { name, profileLink, platform, collaboration } = req.body;
+  const { name, profileLink, platform, gender, collaboration } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const crRes = await client.query(
-      `INSERT INTO creators (name,profile_link,platform) VALUES ($1,$2,$3) RETURNING *`,
-      [name, profileLink || '', platform || 'Meta']
+      `INSERT INTO creators (name,profile_link,platform,gender) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [name, profileLink || '', platform || 'Meta', gender || '']
     );
     const creator = crRes.rows[0];
     const collabs = [];
@@ -307,11 +317,31 @@ app.post('/api/creators', async (req, res) => {
 });
 
 app.put('/api/creators/:id', async (req, res) => {
-  const { name, profileLink, platform, rating, ratingTags, ratingNote } = req.body;
+  const { name, profileLink, platform, gender, rating, ratingTags, ratingNote } = req.body;
   try {
     await pool.query(
-      `UPDATE creators SET name=$1, profile_link=$2, platform=$3, rating=$4, rating_tags=$5::jsonb, rating_note=$6 WHERE id=$7`,
-      [name, profileLink || '', platform || 'Meta', rating || 0, JSON.stringify(ratingTags || []), ratingNote || '', req.params.id]
+      `UPDATE creators SET name=$1, profile_link=$2, platform=$3, gender=$4, rating=$5, rating_tags=$6::jsonb, rating_note=$7 WHERE id=$8`,
+      [name, profileLink || '', platform || 'Meta', gender || '', rating || 0, JSON.stringify(ratingTags || []), ratingNote || '', req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+// ── App settings (budget) ─────────────────────────────────────────────────────
+app.get('/api/settings', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT monthly_budget FROM app_settings WHERE id=1');
+    res.json({ monthlyBudget: r.rows[0] ? Number(r.rows[0].monthly_budget) : 0 });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/settings', async (req, res) => {
+  const { monthlyBudget } = req.body;
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (id, monthly_budget) VALUES (1, $1)
+       ON CONFLICT (id) DO UPDATE SET monthly_budget = $1`,
+      [Number(monthlyBudget) || 0]
     );
     res.json({ success: true });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
