@@ -517,6 +517,8 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
     onUpdateCreator({ ...creator, name: name.trim() || creator.name, profileLink: link.trim(), platform, gender, rating, ratingTags: tags, ratingNote: note });
     setEditing(false);
   };
+  // Quick one-click gender setter (visible in the profile, not hidden behind edit)
+  const setGenderNow = (g) => onUpdateCreator({ ...creator, gender: g, rating, ratingTags: tags, ratingNote: note });
 
   const collabs = creator.collaborations || [];
   const totalItems = collabs.reduce((s, c) => s + (c.productCount || 0), 0);
@@ -552,8 +554,21 @@ const CreatorProfile = ({ creator, onClose, onUpdateCreator, onAddCollab, onEdit
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5, flexWrap: "wrap" }}>
                   <Chip color={PLATFORM_COLOR[creator.platform]}>{creator.platform}</Chip>
-                  {creator.gender && <Chip color={GENDER_COLOR[creator.gender]}>{creator.gender}</Chip>}
                   {creator.profileLink && <a href={creator.profileLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: T.blue, wordBreak: "break-all" }}>{creator.profileLink}</a>}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: T.textSec, marginRight: 2 }}>Gender</span>
+                  {GENDERS.map(g => {
+                    const active = creator.gender === g;
+                    const c = GENDER_COLOR[g];
+                    return (
+                      <button key={g} onClick={() => setGenderNow(g)}
+                        style={{ padding: "5px 13px", borderRadius: 99, fontSize: 12, fontWeight: 600, border: `1.5px solid ${active ? c : "transparent"}`, background: active ? c + "18" : T.pillBg, color: active ? c : T.textSec, cursor: "pointer", transition: "all 0.15s" }}>
+                        {g}
+                      </button>
+                    );
+                  })}
+                  {!creator.gender && <span style={{ fontSize: 11, color: T.textTert }}>— set for product insights</span>}
                 </div>
               </>
             )}
