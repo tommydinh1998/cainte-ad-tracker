@@ -124,6 +124,74 @@ const IssueModal = ({ ad, batch, onConfirm, onClose }) => {
   );
 };
 
+// ── CommentThread — replies under a flagged issue ─────────────────────────────
+const fmtDateTime = (d) => new Date(d).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+const CommentThread = ({ ad, indent = 0, onAdd, onDelete }) => {
+  const [author, setAuthor] = useState(() => localStorage.getItem("cainte_comment_author") === "PDM" ? "PDM" : "CAINTE");
+  const [body, setBody]     = useState("");
+  const [sending, setSending] = useState(false);
+  const comments = ad.comments || [];
+
+  const pick = (k) => { setAuthor(k); localStorage.setItem("cainte_comment_author", k); };
+
+  const send = async () => {
+    const text = body.trim();
+    if (!text || sending) return;
+    setSending(true);
+    await onAdd(ad, author, text);
+    setBody(""); setSending(false);
+  };
+
+  return (
+    <div style={{ marginTop: 8, paddingLeft: indent }}>
+      {comments.map(c => {
+        const cfg = OWNER[c.author] || OWNER.CAINTE;
+        return (
+          <div key={c.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 7 }}>
+            <div style={{ flexShrink: 0, marginTop: 1 }}><Chip color={cfg.color} bg={cfg.bg}>{cfg.label}</Chip></div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: T.text, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.body}</div>
+              <div style={{ fontSize: 10, color: T.textTert, marginTop: 2 }}>{fmtDateTime(c.createdAt)}</div>
+            </div>
+            <button onClick={() => onDelete(ad, c.id)} title="Delete reply"
+              style={{ background: "none", border: "none", color: T.textTert, cursor: "pointer", fontSize: 12, lineHeight: 1, padding: "2px 4px", flexShrink: 0 }}>✕</button>
+          </div>
+        );
+      })}
+
+      {/* composer */}
+      <div style={{ display: "flex", gap: 6, alignItems: "flex-start", marginTop: comments.length ? 8 : 4, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+          {Object.entries(OWNER).map(([k, cfg]) => {
+            const active = author === k;
+            return (
+              <button key={k} onClick={() => pick(k)} title={`Reply as ${cfg.label}`}
+                style={{ padding: "4px 10px", borderRadius: 99, fontSize: 11, fontWeight: 600, border: `1.5px solid ${active ? cfg.color : "transparent"}`, background: active ? cfg.bg : T.pillBg, color: active ? cfg.color : T.textSec, cursor: "pointer", transition: "all 0.15s" }}>
+                {cfg.label}
+              </button>
+            );
+          })}
+        </div>
+        <textarea
+          value={body}
+          onChange={e => setBody(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); }}
+          placeholder="Write a reply…"
+          rows={1}
+          style={{ flex: "1 1 180px", minWidth: 160, background: T.bg, border: "1.5px solid rgba(60,60,67,0.1)", borderRadius: 9, padding: "7px 11px", color: T.text, fontSize: 12, lineHeight: 1.5, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", outline: "none" }}
+          onFocus={e => e.target.style.borderColor = T.blue}
+          onBlur={e => e.target.style.borderColor = "rgba(60,60,67,0.1)"}
+        />
+        <button onClick={send} disabled={!body.trim() || sending}
+          style={{ padding: "7px 14px", borderRadius: 9, border: "none", background: body.trim() ? T.blue : T.pillBg, color: body.trim() ? "#fff" : T.textTert, fontSize: 12, fontWeight: 600, cursor: body.trim() ? "pointer" : "default", flexShrink: 0 }}>
+          {sending ? "…" : "Send"}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ── CopyCodesBtn ──────────────────────────────────────────────────────────────
 const CopyCodesBtn = ({ ads }) => {
   const [copied, setCopied] = useState(false);
@@ -152,7 +220,7 @@ const CopyCodesBtn = ({ ads }) => {
 };
 
 // ── BatchCard ─────────────────────────────────────────────────────────────────
-const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
+const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit, onAddComment, onDeleteComment }) => {
   const [expanded,    setExpanded]   = useState(false);
   const [issueModal,  setIssueModal] = useState(null);
   const { isComplete } = getBatchState(batch);
@@ -244,6 +312,9 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
                   {ad.issueNote && (
                     <div style={{ fontSize:11, color:T.red, marginTop:5, paddingLeft:52, lineHeight:1.5 }}>{ad.issueNote}</div>
                   )}
+                  {ad.status === "issue" && (
+                    <CommentThread ad={ad} indent={52} onAdd={onAddComment} onDelete={onDeleteComment} />
+                  )}
                 </div>
               </div>
             ))}
@@ -261,7 +332,7 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit }) => {
 };
 
 // ── ActionsView ───────────────────────────────────────────────────────────────
-const ActionsView = ({ batches, onUpdateAd }) => {
+const ActionsView = ({ batches, onUpdateAd, onAddComment, onDeleteComment }) => {
   const [activeOwner, setActiveOwner] = useState("ALL");
 
   // Collect all issue ads across all batches
@@ -333,6 +404,11 @@ const ActionsView = ({ batches, onUpdateAd }) => {
                       </a>
                     </div>
                   )}
+                  {/* Replies */}
+                  <div style={{ marginBottom:14, paddingTop:2, borderTop:`1px solid ${T.border}` }}>
+                    <CommentThread ad={ad} onAdd={onAddComment} onDelete={onDeleteComment} />
+                  </div>
+
                   {/* Actions */}
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                     <button onClick={() => onUpdateAd(batch.id, ad.id, "live", "", "")}
@@ -643,6 +719,28 @@ export default function AdTracker() {
     await fetch(`/api/batches/${id}`, { method: "DELETE" });
   };
 
+  // Issue replies — matched by the stable display id (adId), which survives batch edits
+  const handleAddComment = async (ad, author, body) => {
+    const res = await fetch("/api/comments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ adRef: ad.adId, author, body })
+    });
+    const saved = await res.json();
+    setBatches(prev => prev.map(b => ({
+      ...b,
+      ads: b.ads.map(a => a.adId !== ad.adId ? a : { ...a, comments: [...(a.comments || []), saved] })
+    })));
+  };
+
+  const handleDeleteComment = async (ad, commentId) => {
+    setBatches(prev => prev.map(b => ({
+      ...b,
+      ads: b.ads.map(a => a.adId !== ad.adId ? a : { ...a, comments: (a.comments || []).filter(c => c.id !== commentId) })
+    })));
+    await fetch(`/api/comments/${commentId}`, { method: "DELETE" });
+  };
+
   const handleAdd = async (batch) => {
     const res = await fetch("/api/batches", {
       method: "POST",
@@ -763,13 +861,13 @@ export default function AdTracker() {
                 };
                 return rank(a) - rank(b);
               }).map(batch=>(
-                <BatchCard key={batch.id} batch={batch} onUpdateAd={handleUpdateAd} onDelete={handleDelete} onEdit={handleEdit} />
+                <BatchCard key={batch.id} batch={batch} onUpdateAd={handleUpdateAd} onDelete={handleDelete} onEdit={handleEdit} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} />
               ))}
             </div>
           )}
         </div>
       ) : (
-        <ActionsView batches={batches} onUpdateAd={handleUpdateAd} />
+        <ActionsView batches={batches} onUpdateAd={handleUpdateAd} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} />
       )}
 
       {loading && (

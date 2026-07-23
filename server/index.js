@@ -85,6 +85,20 @@ async function initDB() {
   await pool.query(`
     ALTER TABLE ads ADD COLUMN IF NOT EXISTS spark_code TEXT DEFAULT '';
   `);
+  // Reply threads on flagged ad issues.
+  // Keyed by ads.ad_id (e.g. '#0368') — NOT ads.id — because PUT /api/batches/:id
+  // deletes and re-inserts ad rows with new primary keys on every batch edit,
+  // while the display ad_id is preserved. This keeps comments attached.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ad_comments (
+      id SERIAL PRIMARY KEY,
+      ad_ref TEXT NOT NULL,
+      author TEXT DEFAULT 'CAINTE',
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS ad_comments_ad_ref_idx ON ad_comments (ad_ref);
+  `);
   // Influencer gender (for the men/women product split) + app settings (budget)
   await pool.query(`
     ALTER TABLE creators ADD COLUMN IF NOT EXISTS gender TEXT DEFAULT '';
@@ -97,7 +111,15 @@ async function initDB() {
   console.log('DB ready');
 }
 
-const mapAd = (a) => ({
+const mapComment = (c) => ({
+  id:        c.id,
+  adRef:     c.ad_ref,
+  author:    c.author,
+  body:      c.body,
+  createdAt: c.created_at,
+});
+
+const mapAd = (a, comments = []) => ({
   id:         a.id,
   adId:       a.ad_id,
   name:       a.name,
@@ -105,9 +127,10 @@ const mapAd = (a) => ({
   issueNote:  a.issue_note,
   assignedTo: a.assigned_to,
   sparkCode:  a.spark_code || '',
+  comments:   comments.filter(c => c.ad_ref === a.ad_id).map(mapComment),
 });
 
-const mapBatch = (b, ads) => ({
+const mapBatch = (b, ads, comments = []) => ({
   id:            b.id,
   name:          b.name,
   platform:      b.platform,
@@ -116,7 +139,7 @@ const mapBatch = (b, ads) => ({
   submittedBy:   b.submitted_by,
   creatorHandle: b.creator_handle,
   submittedDate: b.submitted_date,
-  ads:           ads.filter(a => a.batch_id === b.id).map(mapAd),
+  ads:           ads.filter(a => a.batch_id === b.id).map(a => mapAd(a, comments)),
 });
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -125,7 +148,8 @@ app.get('/api/batches', async (req, res) => {
   try {
     const batchRes = await pool.query('SELECT * FROM batches ORDER BY created_at DESC');
     const adRes    = await pool.query('SELECT * FROM ads ORDER BY sort_order ASC, id ASC');
-    res.json(batchRes.rows.map(b => mapBatch(b, adRes.rows)));
+    const comRes   = await pool.query('SELECT * FROM ad_comments ORDER BY created_at ASC');
+    res.json(batchRes.rows.map(b => mapBatch(b, adRes.rows, comRes.rows)));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
@@ -174,7 +198,7 @@ app.put('/api/batches/:id', async (req, res) => {
       [name, platform, link||'', notes||'', submittedBy||'', creatorHandle||'', req.params.id]
     );
     await client.query('DELETE FROM ads WHERE batch_id=$1', [req.params.id]);
-    const updatedAds = [];
+    const updatedRows = [];
     for (let i = 0; i < ads.length; i++) {
       const a = ads[i];
       // Preserve existing adId if ad existed, generate new unique one if new
@@ -187,8 +211,15 @@ app.put('/api/batches/:id', async (req, res) => {
         `INSERT INTO ads (id,batch_id,ad_id,name,status,issue_note,assigned_to,spark_code,sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
         [seqRes2.rows[0].next_id, req.params.id, finalAdId, a.name, a.status||'pending', a.issueNote||'', a.assignedTo||'', a.sparkCode||'', i]
       );
-      updatedAds.push(mapAd(aRes.rows[0]));
+      updatedRows.push(aRes.rows[0]);
     }
+    // Re-attach existing comments (keyed by the preserved ad_id) so the edit
+    // response doesn't blank out threads in the UI
+    const refs = updatedRows.map(r => r.ad_id);
+    const comRes = refs.length
+      ? await client.query('SELECT * FROM ad_comments WHERE ad_ref = ANY($1::text[])', [refs])
+      : { rows: [] };
+    const updatedAds = updatedRows.map(r => mapAd(r, comRes.rows));
     await client.query('COMMIT');
     res.json({ success:true, ads: updatedAds });
   } catch (e) {
@@ -199,9 +230,33 @@ app.put('/api/batches/:id', async (req, res) => {
 
 app.delete('/api/batches/:id', async (req, res) => {
   try {
+    // Comments are keyed by ad_ref (no FK), so clean them up before the ads cascade away
+    const adRes = await pool.query('SELECT ad_id FROM ads WHERE batch_id=$1', [req.params.id]);
+    const refs = adRes.rows.map(r => r.ad_id);
+    if (refs.length) await pool.query('DELETE FROM ad_comments WHERE ad_ref = ANY($1::text[])', [refs]);
     await pool.query('DELETE FROM batches WHERE id=$1', [req.params.id]);
     res.json({ success:true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+// ── Issue reply threads ───────────────────────────────────────────────────────
+app.post('/api/comments', async (req, res) => {
+  const { adRef, author, body } = req.body;
+  if (!adRef || !body || !body.trim()) return res.status(400).json({ error: 'adRef and body are required' });
+  try {
+    const r = await pool.query(
+      `INSERT INTO ad_comments (ad_ref, author, body) VALUES ($1,$2,$3) RETURNING *`,
+      [adRef, author === 'PDM' ? 'PDM' : 'CAINTE', body.trim()]
+    );
+    res.json(mapComment(r.rows[0]));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/comments/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ad_comments WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/api/ads/:id', async (req, res) => {
