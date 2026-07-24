@@ -116,7 +116,24 @@ const ctApi = {
   createChild: (cid, key, b) => fetch(`/api/ct/collections/${cid}/${key}`, jreq("POST", b)).then((r) => r.json()),
   update: (key, id, b) => fetch(`/api/ct/${key}/${id}`, jreq("PUT", b)).then((r) => r.json()),
   remove: (key, id) => fetch(`/api/ct/${key}/${id}`, { method: "DELETE" }),
+  createIdea: (b) => fetch("/api/ct/ideas", jreq("POST", b)).then((r) => r.json()),
+  uploadIdeaFile: (ideaId, f) => fetch(`/api/ct/ideas/${ideaId}/files`, jreq("POST", { filename: f.name, mimetype: f.type, dataBase64: f.dataBase64 })).then((r) => r.json()),
+  removeIdeaFile: (id) => fetch(`/api/ct/idea-files/${id}`, { method: "DELETE" }),
 };
+
+// ── Image staging (Inspiration bank) ─────────────────────────────────────────
+const MAX_FILE_MB = 10;
+const fileToStaged = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve({ name: file.name, type: file.type || "application/octet-stream", size: file.size, dataBase64: String(reader.result).split(",")[1] || "" });
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+const linkDomain = (url) => {
+  try { return new URL(/^https?:\/\//.test(url) ? url : `https://${url}`).hostname.replace(/^www\./, ""); }
+  catch { return url; }
+};
+const linkHref = (url) => (/^https?:\/\//.test(url) ? url : `https://${url}`);
 
 // ── Shared styles (mirrors InfluencerTracker) ────────────────────────────────
 const smallInput = { width: "100%", background: T.bg, border: "1.5px solid rgba(60,60,67,0.1)", borderRadius: 10, padding: "10px 13px", color: T.text, fontSize: 14, boxSizing: "border-box", outline: "none", fontFamily: "inherit", transition: "border-color 0.15s" };
@@ -207,6 +224,110 @@ function EntityModal({ title, fields, initial = {}, onSubmit, onDelete, onClose,
   );
 }
 
+// Inspiration-bank modal: fields + image upload (staged locally, sent on save)
+function IdeaModal({ initial, existingFiles, onSubmit, onDelete, onDeleteFile, onClose }) {
+  const isNew = !initial;
+  const [form, setForm] = useState({
+    title: initial?.title || "", link: initial?.link || "", category: initial?.category || "",
+    notes: initial?.notes || "", added_by: initial?.added_by || "",
+  });
+  const [staged, setStaged] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+  const valid = form.title.trim().length > 0;
+
+  const pickFiles = async (e) => {
+    const files = [...(e.target.files || [])];
+    e.target.value = "";
+    const ok = [];
+    for (const f of files) {
+      if (f.size > MAX_FILE_MB * 1048576) { alert(`${f.name} is larger than ${MAX_FILE_MB} MB and was skipped.`); continue; }
+      ok.push(await fileToStaged(f));
+    }
+    setStaged((p) => [...p, ...ok]);
+  };
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    try { await onSubmit(form, staged); } finally { setBusy(false); }
+  };
+
+  const thumb = { width: 74, height: 74, objectFit: "cover", borderRadius: 10, display: "block" };
+  const thumbWrap = { position: "relative", flexShrink: 0 };
+  const thumbX = { position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: 99, border: "none", background: T.text, color: "#fff", fontSize: 10, cursor: "pointer", lineHeight: 1 };
+
+  return (
+    <div style={overlay} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div style={modalCard}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+          <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.02em" }}>{isNew ? "New Idea" : "Edit Idea"}</div>
+          <button onClick={onClose} style={{ background: T.pillBg, border: "none", borderRadius: 99, width: 30, height: 30, cursor: "pointer", color: T.textSec, fontSize: 13 }}>✕</button>
+        </div>
+
+        <div style={{ marginBottom: 18 }}>
+          <FormLabel>Title<span style={{ color: T.red, marginLeft: 3 }}>*</span></FormLabel>
+          <input value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Chunky chain necklace" style={smallInput} {...focusBlue} />
+        </div>
+        <div style={{ marginBottom: 18 }}>
+          <FormLabel>Link <span style={{ color: T.textTert, fontWeight: 400 }}>— webshop, Pinterest, Instagram…</span></FormLabel>
+          <input value={form.link} onChange={(e) => set("link", e.target.value)} placeholder="https://…" style={smallInput} {...focusBlue} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+          <div>
+            <FormLabel>Category</FormLabel>
+            <input value={form.category} onChange={(e) => set("category", e.target.value)} placeholder="e.g. Necklaces" style={smallInput} {...focusBlue} />
+          </div>
+          <div>
+            <FormLabel>Added by</FormLabel>
+            <input value={form.added_by} onChange={(e) => set("added_by", e.target.value)} placeholder="Your name" style={smallInput} {...focusBlue} />
+          </div>
+        </div>
+        <div style={{ marginBottom: 18 }}>
+          <FormLabel>Notes</FormLabel>
+          <textarea rows={3} value={form.notes} onChange={(e) => set("notes", e.target.value)} placeholder="What do you like about it?" style={textareaStyle} {...focusBlue} />
+        </div>
+
+        <div style={{ marginBottom: 6 }}>
+          <FormLabel>Images</FormLabel>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+            {(existingFiles || []).map((f) => (
+              <div key={f.id} style={thumbWrap}>
+                <img src={`/api/ct/idea-files/${f.id}`} alt={f.filename} style={thumb} />
+                <button title="Remove image" onClick={() => window.confirm("Remove this image?") && onDeleteFile(f.id)} style={thumbX}>✕</button>
+              </div>
+            ))}
+            {staged.map((f, i) => (
+              <div key={i} style={thumbWrap}>
+                <img src={`data:${f.type};base64,${f.dataBase64}`} alt={f.name} style={{ ...thumb, opacity: 0.85 }} />
+                <button title="Remove image" onClick={() => setStaged((p) => p.filter((_, j) => j !== i))} style={thumbX}>✕</button>
+              </div>
+            ))}
+            <label style={{ width: 74, height: 74, borderRadius: 10, border: `1.5px dashed rgba(60,60,67,0.25)`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.blue, fontSize: 22, background: T.bg }}>
+              +
+              <input type="file" accept="image/*" multiple onChange={pickFiles} style={{ display: "none" }} />
+            </label>
+          </div>
+          <div style={{ fontSize: 11, color: T.textTert, marginTop: 8 }}>Max {MAX_FILE_MB} MB per image.</div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
+          {onDelete && (
+            <button onClick={() => window.confirm("Delete this idea and its images?") && onDelete()}
+              style={{ background: T.red + "14", border: "none", borderRadius: 14, color: T.red, padding: "14px 20px", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+              Delete
+            </button>
+          )}
+          <button onClick={submit} disabled={!valid || busy}
+            style={{ flex: 1, background: valid ? T.blue : T.pillBg, border: "none", borderRadius: 14, color: valid ? "#fff" : T.textTert, padding: "14px 0", fontSize: 16, fontWeight: 700, cursor: valid ? "pointer" : "default", boxShadow: valid ? `0 4px 18px ${T.blue}40` : "none" }}>
+            {busy ? "Saving…" : isNew ? "Add Idea" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Calendar events from the full dataset ────────────────────────────────────
 function buildEvents(data) {
   const byId = Object.fromEntries(data.collections.map((c) => [c.id, c]));
@@ -222,7 +343,7 @@ function buildEvents(data) {
   return ev.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-const EMPTY = { collections: [], products: [], samples: [], content_items: [], marketing_activities: [], tasks: [] };
+const EMPTY = { collections: [], products: [], samples: [], content_items: [], marketing_activities: [], tasks: [], ideas: [], idea_files: [] };
 
 // ── Main component ───────────────────────────────────────────────────────────
 export default function CollectionTracker() {
@@ -234,6 +355,9 @@ export default function CollectionTracker() {
   const [showAdd, setShowAdd] = useState(false);
   const [editInfo, setEditInfo] = useState(false);
   const [rowModal, setRowModal] = useState(null); // { key, row | null }
+  const [ideaModal, setIdeaModal] = useState(null); // { idea: row | null }
+  const [ideaSearch, setIdeaSearch] = useState("");
+  const [fIdeaCat, setFIdeaCat] = useState("All");
 
   // filters (Collections tab)
   const [search, setSearch] = useState("");
@@ -395,6 +519,39 @@ export default function CollectionTracker() {
     );
   };
 
+  // ── Inspiration bank derived data + handlers ──
+  const ideaFilesFor = (ideaId) => data.idea_files.filter((f) => f.idea_id === ideaId);
+  const ideaCategories = useMemo(() => [...new Set(data.ideas.map((i) => i.category).filter(Boolean))].sort(), [data.ideas]);
+  const filteredIdeas = data.ideas
+    .filter((i) => {
+      if (fIdeaCat !== "All" && i.category !== fIdeaCat) return false;
+      if (ideaSearch) {
+        const q = ideaSearch.toLowerCase();
+        if (![i.title, i.notes, i.category, i.added_by, i.link].some((v) => (v || "").toLowerCase().includes(q))) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => b.id - a.id);
+
+  const saveIdea = async (form, staged) => {
+    let idea = ideaModal.idea;
+    if (idea) await ctApi.update("ideas", idea.id, form);
+    else idea = await ctApi.createIdea(form);
+    for (const f of staged) await ctApi.uploadIdeaFile(idea.id, f);
+    await reload();
+    setIdeaModal(null);
+  };
+  const deleteIdea = async () => {
+    await ctApi.remove("ideas", ideaModal.idea.id);
+    await reload();
+    setIdeaModal(null);
+  };
+  const deleteIdeaFile = async (fileId) => {
+    await ctApi.removeIdeaFile(fileId);
+    await reload();
+    setIdeaModal((m) => m); // keep modal open; thumbnails come from data
+  };
+
   // ── Save handlers ──
   const saveCollection = async (form) => {
     const created = await ctApi.createCollection(form);
@@ -435,15 +592,16 @@ export default function CollectionTracker() {
               <h1 style={{ fontSize: 32, fontWeight: 700, letterSpacing: "-0.03em", color: T.text, lineHeight: 1 }}>Collection Tracker</h1>
               {headerStats}
             </div>
-            <button onClick={() => setShowAdd(true)}
+            <button onClick={() => (activeTab === "inspiration" && !detail ? setIdeaModal({ idea: null }) : setShowAdd(true))}
               style={{ background: T.blue, border: "none", borderRadius: 99, color: "#fff", padding: "11px 22px", fontSize: 15, fontWeight: 600, cursor: "pointer", flexShrink: 0, boxShadow: `0 4px 18px ${T.blue}38`, letterSpacing: "-0.01em" }}>
-              + New Collection
+              {activeTab === "inspiration" && !detail ? "+ Add Idea" : "+ New Collection"}
             </button>
           </div>
           <div style={{ display: "flex", gap: 8, paddingBottom: 14, overflowX: "auto", alignItems: "center" }}>
             <TabBtn tab="dashboard" label="Dashboard" />
             <TabBtn tab="collections" label="Collections" />
             <TabBtn tab="calendar" label="Calendar" />
+            <TabBtn tab="inspiration" label="Inspiration" />
           </div>
         </div>
       </div>
@@ -622,7 +780,7 @@ export default function CollectionTracker() {
               </div>
             )}
           </>
-        ) : (
+        ) : activeTab === "calendar" ? (
           /* ── CALENDAR ── */
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
@@ -680,6 +838,69 @@ export default function CollectionTracker() {
               );
             })()}
           </>
+        ) : (
+          /* ── INSPIRATION BANK ── */
+          <>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 18 }}>
+              <input value={ideaSearch} onChange={(e) => setIdeaSearch(e.target.value)} placeholder="Search ideas…"
+                style={{ ...smallInput, width: 220 }} {...focusBlue} />
+              {ideaCategories.length > 0 && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {pill(fIdeaCat === "All", "All", () => setFIdeaCat("All"))}
+                  {ideaCategories.map((c) => pill(fIdeaCat === c, c, () => setFIdeaCat(fIdeaCat === c ? "All" : c)))}
+                </div>
+              )}
+            </div>
+
+            {filteredIdeas.length === 0 ? (
+              <div style={{ ...card, padding: 48, textAlign: "center" }}>
+                <div style={{ fontSize: 34, marginBottom: 10 }}>💡</div>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
+                  {data.ideas.length === 0 ? "The inspiration bank is empty" : "No ideas match"}
+                </div>
+                <div style={{ fontSize: 14, color: T.textSec }}>
+                  {data.ideas.length === 0 ? "Save images, links and notes for future product ideas." : "Try another search or category."}
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 }}>
+                {filteredIdeas.map((idea) => {
+                  const files = ideaFilesFor(idea.id);
+                  return (
+                    <div key={idea.id} onClick={() => setIdeaModal({ idea })} style={{ ...card, overflow: "hidden", cursor: "pointer", display: "flex", flexDirection: "column" }}>
+                      {files.length > 0 && (
+                        <div style={{ position: "relative", background: T.bg }}>
+                          <img src={`/api/ct/idea-files/${files[0].id}`} alt={idea.title}
+                            style={{ width: "100%", height: 210, objectFit: "cover", display: "block" }} />
+                          {files.length > 1 && (
+                            <span style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.62)", color: "#fff", fontSize: 11, fontWeight: 600, borderRadius: 99, padding: "3px 9px" }}>
+                              +{files.length - 1} more
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div style={{ padding: "14px 16px 16px", display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em" }}>{idea.title}</span>
+                          {idea.category && <Chip color={T.purple}>{idea.category}</Chip>}
+                        </div>
+                        {idea.notes && <div style={{ fontSize: 13, color: T.textSec, lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{idea.notes}</div>}
+                        {idea.link && (
+                          <a href={linkHref(idea.link)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+                            style={{ fontSize: 13, fontWeight: 600, color: T.blue, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                            🔗 {linkDomain(idea.link)}
+                          </a>
+                        )}
+                        <div style={{ fontSize: 11, color: T.textTert, marginTop: "auto" }}>
+                          {idea.added_by ? `${idea.added_by} · ` : ""}{fmtD(idea.created_at)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -693,6 +914,15 @@ export default function CollectionTracker() {
           onSubmit={async (form) => { await ctApi.update("collections", detail.id, form); await reload(); setEditInfo(false); }}
           onDelete={async () => { await ctApi.remove("collections", detail.id); await reload(); setEditInfo(false); setDetailId(null); }}
           onClose={() => setEditInfo(false)} />
+      )}
+      {ideaModal && (
+        <IdeaModal
+          initial={ideaModal.idea}
+          existingFiles={ideaModal.idea ? ideaFilesFor(ideaModal.idea.id) : []}
+          onSubmit={saveIdea}
+          onDelete={ideaModal.idea ? deleteIdea : null}
+          onDeleteFile={deleteIdeaFile}
+          onClose={() => setIdeaModal(null)} />
       )}
       {rowModal && (
         <EntityModal

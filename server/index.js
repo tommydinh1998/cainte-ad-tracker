@@ -165,6 +165,24 @@ async function initDB() {
       status TEXT NOT NULL DEFAULT 'To do',
       priority TEXT NOT NULL DEFAULT 'Medium'
     );
+    CREATE TABLE IF NOT EXISTS ct_ideas (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      link TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      added_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS ct_idea_files (
+      id SERIAL PRIMARY KEY,
+      idea_id INTEGER NOT NULL REFERENCES ct_ideas(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      mimetype TEXT DEFAULT 'application/octet-stream',
+      size INTEGER DEFAULT 0,
+      data BYTEA,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
   console.log('DB ready');
 }
@@ -588,6 +606,7 @@ const CT = {
   content_items:        { table: 'ct_content_items', fields: ['type', 'title', 'deadline', 'status', 'owner', 'notes'], dates: ['deadline'] },
   marketing_activities: { table: 'ct_marketing',     fields: ['type', 'title', 'activity_date', 'status', 'owner', 'notes'], dates: ['activity_date'] },
   tasks:                { table: 'ct_tasks',         fields: ['title', 'owner', 'deadline', 'status', 'priority'], dates: ['deadline'] },
+  ideas:                { table: 'ct_ideas',         fields: ['title', 'link', 'category', 'notes', 'added_by'], dates: [] },
 };
 
 const ctPick = (key, body) => {
@@ -611,6 +630,9 @@ app.get('/api/ct/data', async (req, res) => {
       const r = await pool.query(`SELECT * FROM ${cfg.table} ORDER BY ${orderBy}`);
       out[key] = r.rows;
     }
+    // Idea image metadata only (never the bytes) — bytes stream via /api/ct/idea-files/:id
+    const f = await pool.query('SELECT id, idea_id, filename, mimetype, size FROM ct_idea_files ORDER BY id');
+    out.idea_files = f.rows;
     res.json(out);
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
@@ -624,9 +646,51 @@ app.post('/api/ct/collections', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
+// Inspiration bank — ideas live outside collections
+app.post('/api/ct/ideas', async (req, res) => {
+  try {
+    const { cols, vals } = ctPick('ideas', req.body);
+    const ph = cols.map((_, i) => `$${i + 1}`).join(',');
+    const r = await pool.query(`INSERT INTO ct_ideas (${cols.join(',')}) VALUES (${ph}) RETURNING *`, vals);
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ct/ideas/:id/files', async (req, res) => {
+  const { filename, mimetype, dataBase64 } = req.body;
+  if (!filename || !dataBase64) return res.status(400).json({ error: 'filename and dataBase64 are required' });
+  try {
+    const buf = Buffer.from(dataBase64, 'base64');
+    const r = await pool.query(
+      `INSERT INTO ct_idea_files (idea_id, filename, mimetype, size, data)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id, idea_id, filename, mimetype, size`,
+      [req.params.id, filename, mimetype || 'application/octet-stream', buf.length, buf]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ct/idea-files/:id', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT filename, mimetype, data FROM ct_idea_files WHERE id=$1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'not found' });
+    const f = r.rows[0];
+    res.setHeader('Content-Type', f.mimetype || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(f.filename)}"`);
+    res.send(f.data);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/ct/idea-files/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ct_idea_files WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/ct/collections/:id/:key', async (req, res) => {
   const { key } = req.params;
-  if (!CT[key] || key === 'collections') return res.status(404).json({ error: 'unknown entity' });
+  if (!CT[key] || key === 'collections' || key === 'ideas') return res.status(404).json({ error: 'unknown entity' });
   try {
     const { cols, vals } = ctPick(key, req.body);
     cols.push('collection_id'); vals.push(Number(req.params.id));
