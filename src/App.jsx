@@ -2,10 +2,12 @@ import { useState } from "react";
 import { T } from "./theme.jsx";
 import AdTracker from "./AdTracker.jsx";
 import InfluencerTracker from "./InfluencerTracker.jsx";
+import CollectionTracker from "./CollectionTracker.jsx";
 
 const PRODUCTS = [
   { key: "ads",        label: "Ad Tracker" },
   { key: "influencer", label: "Influencer Tracker" },
+  { key: "collection", label: "Collection Tracker" },
 ];
 
 export default function App() {
@@ -88,7 +90,7 @@ export default function App() {
         </div>
       </div>
 
-      {product === "ads" ? <AdTracker /> : <InfluencerTracker />}
+      {product === "ads" ? <AdTracker /> : product === "influencer" ? <InfluencerTracker /> : <CollectionTracker />}
     </div>
   );
 }

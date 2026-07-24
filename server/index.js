@@ -108,6 +108,64 @@ async function initDB() {
     );
     INSERT INTO app_settings (id, monthly_budget) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;
   `);
+  // ── Collection Tracker ──────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ct_collections (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      launch_date DATE,
+      status TEXT NOT NULL DEFAULT 'Planning',
+      owners TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS ct_products (
+      id SERIAL PRIMARY KEY,
+      collection_id INTEGER NOT NULL REFERENCES ct_collections(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      sku TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS ct_samples (
+      id SERIAL PRIMARY KEY,
+      collection_id INTEGER NOT NULL REFERENCES ct_collections(id) ON DELETE CASCADE,
+      product_name TEXT NOT NULL,
+      expected_date DATE,
+      received_date DATE,
+      status TEXT NOT NULL DEFAULT 'Ordered',
+      comments TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS ct_content_items (
+      id SERIAL PRIMARY KEY,
+      collection_id INTEGER NOT NULL REFERENCES ct_collections(id) ON DELETE CASCADE,
+      type TEXT NOT NULL DEFAULT 'Product photos',
+      title TEXT NOT NULL,
+      deadline DATE,
+      status TEXT NOT NULL DEFAULT 'Not started',
+      owner TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS ct_marketing (
+      id SERIAL PRIMARY KEY,
+      collection_id INTEGER NOT NULL REFERENCES ct_collections(id) ON DELETE CASCADE,
+      type TEXT NOT NULL DEFAULT 'Teaser',
+      title TEXT NOT NULL,
+      activity_date DATE,
+      status TEXT NOT NULL DEFAULT 'Planned',
+      owner TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS ct_tasks (
+      id SERIAL PRIMARY KEY,
+      collection_id INTEGER NOT NULL REFERENCES ct_collections(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      owner TEXT NOT NULL DEFAULT '',
+      deadline DATE,
+      status TEXT NOT NULL DEFAULT 'To do',
+      priority TEXT NOT NULL DEFAULT 'Medium'
+    );
+  `);
   console.log('DB ready');
 }
 
@@ -518,6 +576,86 @@ app.delete('/api/sourcing/:id', async (req, res) => {
     await pool.query('DELETE FROM sourcing WHERE id=$1', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Collection Tracker ────────────────────────────────────────────────
+// Generic CRUD over ct_* tables; URL names map to prefixed table names and
+// each table has a field whitelist ('' dates are coerced to NULL).
+const CT = {
+  collections:          { table: 'ct_collections',   fields: ['name', 'launch_date', 'status', 'owners', 'description'], dates: ['launch_date'] },
+  products:             { table: 'ct_products',      fields: ['name', 'sku', 'category', 'notes'], dates: [] },
+  samples:              { table: 'ct_samples',       fields: ['product_name', 'expected_date', 'received_date', 'status', 'comments'], dates: ['expected_date', 'received_date'] },
+  content_items:        { table: 'ct_content_items', fields: ['type', 'title', 'deadline', 'status', 'owner', 'notes'], dates: ['deadline'] },
+  marketing_activities: { table: 'ct_marketing',     fields: ['type', 'title', 'activity_date', 'status', 'owner', 'notes'], dates: ['activity_date'] },
+  tasks:                { table: 'ct_tasks',         fields: ['title', 'owner', 'deadline', 'status', 'priority'], dates: ['deadline'] },
+};
+
+const ctPick = (key, body) => {
+  const { fields, dates } = CT[key];
+  const cols = [], vals = [];
+  for (const f of fields) {
+    if (!(f in body)) continue;
+    let v = body[f];
+    if (dates.includes(f) && (v === '' || v === undefined)) v = null;
+    cols.push(f); vals.push(v);
+  }
+  return { cols, vals };
+};
+
+// One payload with everything — the frontend derives dashboard/calendar/filters.
+app.get('/api/ct/data', async (req, res) => {
+  try {
+    const out = {};
+    for (const [key, cfg] of Object.entries(CT)) {
+      const orderBy = key === 'collections' ? 'launch_date NULLS LAST, id' : 'id';
+      const r = await pool.query(`SELECT * FROM ${cfg.table} ORDER BY ${orderBy}`);
+      out[key] = r.rows;
+    }
+    res.json(out);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ct/collections', async (req, res) => {
+  try {
+    const { cols, vals } = ctPick('collections', req.body);
+    const ph = cols.map((_, i) => `$${i + 1}`).join(',');
+    const r = await pool.query(`INSERT INTO ct_collections (${cols.join(',')}) VALUES (${ph}) RETURNING *`, vals);
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ct/collections/:id/:key', async (req, res) => {
+  const { key } = req.params;
+  if (!CT[key] || key === 'collections') return res.status(404).json({ error: 'unknown entity' });
+  try {
+    const { cols, vals } = ctPick(key, req.body);
+    cols.push('collection_id'); vals.push(Number(req.params.id));
+    const ph = cols.map((_, i) => `$${i + 1}`).join(',');
+    const r = await pool.query(`INSERT INTO ${CT[key].table} (${cols.join(',')}) VALUES (${ph}) RETURNING *`, vals);
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/ct/:key/:id', async (req, res) => {
+  const { key, id } = req.params;
+  if (!CT[key]) return res.status(404).json({ error: 'unknown entity' });
+  try {
+    const { cols, vals } = ctPick(key, req.body);
+    if (!cols.length) return res.status(400).json({ error: 'no fields' });
+    const sets = cols.map((c, i) => `${c}=$${i + 1}`).join(', ');
+    vals.push(Number(id));
+    const r = await pool.query(`UPDATE ${CT[key].table} SET ${sets} WHERE id=$${vals.length} RETURNING *`, vals);
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/ct/:key/:id', async (req, res) => {
+  const { key, id } = req.params;
+  if (!CT[key]) return res.status(404).json({ error: 'unknown entity' });
+  try {
+    await pool.query(`DELETE FROM ${CT[key].table} WHERE id=$1`, [Number(id)]);
+    res.json({ success: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
 app.use(express.static(path.join(__dirname, '../dist')));
