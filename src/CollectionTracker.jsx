@@ -119,6 +119,8 @@ const ctApi = {
   createIdea: (b) => fetch("/api/ct/ideas", jreq("POST", b)).then((r) => r.json()),
   uploadIdeaFile: (ideaId, f) => fetch(`/api/ct/ideas/${ideaId}/files`, jreq("POST", { filename: f.name, mimetype: f.type, dataBase64: f.dataBase64 })).then((r) => r.json()),
   removeIdeaFile: (id) => fetch(`/api/ct/idea-files/${id}`, { method: "DELETE" }),
+  uploadCollectionFile: (cid, f) => fetch(`/api/ct/collections/${cid}/files`, jreq("POST", { filename: f.name, mimetype: f.type, dataBase64: f.dataBase64 })).then((r) => r.json()),
+  removeCollectionFile: (id) => fetch(`/api/ct/collection-files/${id}`, { method: "DELETE" }),
 };
 
 // ── Image staging (Inspiration bank) ─────────────────────────────────────────
@@ -163,8 +165,10 @@ const Segmented = ({ options, value, onChange, colorFor }) => (
   </div>
 );
 
-// Generic add/edit modal driven by a field config
-function EntityModal({ title, fields, initial = {}, onSubmit, onDelete, onClose, submitLabel = "Save" }) {
+// Generic add/edit modal driven by a field config.
+// withFiles adds an attachment section (images + PDFs, incl. clipboard paste):
+// new files are staged locally and passed to onSubmit(form, staged).
+function EntityModal({ title, fields, initial = {}, onSubmit, onDelete, onClose, submitLabel = "Save", withFiles = false, existingFiles = [], onDeleteFile }) {
   const [form, setForm] = useState(() => {
     const f = {};
     for (const field of fields) {
@@ -174,19 +178,47 @@ function EntityModal({ title, fields, initial = {}, onSubmit, onDelete, onClose,
     }
     return f;
   });
+  const [staged, setStaged] = useState([]);
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
   const valid = fields.every((f) => !f.required || String(form[f.key] || "").trim());
 
+  const stageFiles = async (files) => {
+    const ok = [];
+    for (const f of files) {
+      const isAllowed = f.type.startsWith("image/") || f.type === "application/pdf";
+      if (!isAllowed) { alert(`${f.name || "File"} skipped — only images and PDFs.`); continue; }
+      if (f.size > MAX_FILE_MB * 1048576) { alert(`${f.name} is larger than ${MAX_FILE_MB} MB and was skipped.`); continue; }
+      ok.push(await fileToStaged(f));
+    }
+    if (ok.length) setStaged((p) => [...p, ...ok]);
+  };
+  const pickFiles = (e) => { stageFiles([...(e.target.files || [])]); e.target.value = ""; };
+  const onPaste = (e) => {
+    if (!withFiles) return;
+    const files = [...(e.clipboardData?.items || [])]
+      .filter((i) => i.kind === "file").map((i) => i.getAsFile()).filter(Boolean);
+    if (files.length) {
+      e.preventDefault();
+      stageFiles(files.map((f, i) => (f.name ? f : new File([f], `pasted-image-${Date.now()}-${i}.png`, { type: f.type }))));
+    }
+  };
+
   const submit = async () => {
     if (!valid || busy) return;
     setBusy(true);
-    try { await onSubmit(form); } finally { setBusy(false); }
+    try { await onSubmit(form, staged); } finally { setBusy(false); }
   };
+
+  const isImg = (t) => (t || "").startsWith("image/");
+  const thumb = { width: 74, height: 74, objectFit: "cover", borderRadius: 10, display: "block" };
+  const thumbWrap = { position: "relative", flexShrink: 0 };
+  const thumbX = { position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: 99, border: "none", background: T.text, color: "#fff", fontSize: 10, cursor: "pointer", lineHeight: 1 };
+  const pdfChip = { width: 74, height: 74, borderRadius: 10, background: T.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 10, color: T.textSec, padding: 6, textAlign: "center", overflow: "hidden" };
 
   return (
     <div style={overlay} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div style={modalCard}>
+      <div style={modalCard} onPaste={onPaste}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
           <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.02em" }}>{title}</div>
           <button onClick={onClose} style={{ background: T.pillBg, border: "none", borderRadius: 99, width: 30, height: 30, cursor: "pointer", color: T.textSec, fontSize: 13 }}>✕</button>
@@ -207,6 +239,40 @@ function EntityModal({ title, fields, initial = {}, onSubmit, onDelete, onClose,
             )}
           </div>
         ))}
+
+        {withFiles && (
+          <div style={{ marginBottom: 6 }}>
+            <FormLabel>Attachments <span style={{ color: T.textTert, fontWeight: 400 }}>— images & PDFs</span></FormLabel>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+              {existingFiles.map((f) => (
+                <div key={f.id} style={thumbWrap}>
+                  {isImg(f.mimetype) ? (
+                    <img src={`/api/ct/collection-files/${f.id}`} alt={f.filename} style={thumb} />
+                  ) : (
+                    <div style={pdfChip}><span style={{ fontSize: 20 }}>📄</span><span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 62 }}>{f.filename}</span></div>
+                  )}
+                  <button title="Remove file" onClick={() => window.confirm("Remove this file?") && onDeleteFile(f.id)} style={thumbX}>✕</button>
+                </div>
+              ))}
+              {staged.map((f, i) => (
+                <div key={`s${i}`} style={thumbWrap}>
+                  {isImg(f.type) ? (
+                    <img src={`data:${f.type};base64,${f.dataBase64}`} alt={f.name} style={{ ...thumb, opacity: 0.85 }} />
+                  ) : (
+                    <div style={{ ...pdfChip, opacity: 0.85 }}><span style={{ fontSize: 20 }}>📄</span><span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 62 }}>{f.name}</span></div>
+                  )}
+                  <button title="Remove file" onClick={() => setStaged((p) => p.filter((_, j) => j !== i))} style={thumbX}>✕</button>
+                </div>
+              ))}
+              <label style={{ width: 74, height: 74, borderRadius: 10, border: `1.5px dashed rgba(60,60,67,0.25)`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.blue, fontSize: 22, background: T.bg }}>
+                +
+                <input type="file" accept="image/*,application/pdf" multiple onChange={pickFiles} style={{ display: "none" }} />
+              </label>
+            </div>
+            <div style={{ fontSize: 11, color: T.textTert, marginTop: 8 }}>Tip: paste screenshots directly (⌘V). Max {MAX_FILE_MB} MB per file.</div>
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 10, marginTop: 26 }}>
           {onDelete && (
             <button onClick={() => window.confirm("Delete this? This cannot be undone.") && onDelete()}
@@ -343,7 +409,7 @@ function buildEvents(data) {
   return ev.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-const EMPTY = { collections: [], products: [], samples: [], content_items: [], marketing_activities: [], tasks: [], ideas: [], idea_files: [] };
+const EMPTY = { collections: [], products: [], samples: [], content_items: [], marketing_activities: [], tasks: [], ideas: [], idea_files: [], collection_files: [] };
 
 // ── Main component ───────────────────────────────────────────────────────────
 export default function CollectionTracker() {
@@ -553,11 +619,17 @@ export default function CollectionTracker() {
   };
 
   // ── Save handlers ──
-  const saveCollection = async (form) => {
+  const collectionFilesFor = (cid) => data.collection_files.filter((f) => f.collection_id === cid);
+  const saveCollection = async (form, staged = []) => {
     const created = await ctApi.createCollection(form);
+    if (created?.id) for (const f of staged) await ctApi.uploadCollectionFile(created.id, f);
     await reload();
     setShowAdd(false);
     if (created?.id) openCollection(created.id);
+  };
+  const deleteCollectionFile = async (fileId) => {
+    await ctApi.removeCollectionFile(fileId);
+    await reload();
   };
   const saveRow = async (form) => {
     const { key, row } = rowModal;
@@ -626,6 +698,22 @@ export default function CollectionTracker() {
                     {childRows("samples").length > 0 && <span>Samples: <b style={{ color: T.text }}>{childRows("samples").filter((s) => s.status === "Received").length}/{childRows("samples").length} received</b></span>}
                   </div>
                   {detail.description && <div style={{ fontSize: 14, color: T.textSec, marginTop: 10, maxWidth: 640, lineHeight: 1.5 }}>{detail.description}</div>}
+                  {collectionFilesFor(detail.id).length > 0 && (
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+                      {collectionFilesFor(detail.id).map((f) => (
+                        <a key={f.id} href={`/api/ct/collection-files/${f.id}`} target="_blank" rel="noreferrer" title={f.filename} style={{ textDecoration: "none" }}>
+                          {(f.mimetype || "").startsWith("image/") ? (
+                            <img src={`/api/ct/collection-files/${f.id}`} alt={f.filename}
+                              style={{ width: 84, height: 84, objectFit: "cover", borderRadius: 12, display: "block", boxShadow: "0 1px 3px rgba(0,0,0,0.10)" }} />
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 7, background: T.bg, borderRadius: 99, padding: "8px 14px", fontSize: 13, fontWeight: 600, color: T.text }}>
+                              📄 {f.filename}
+                            </span>
+                          )}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <button onClick={() => setEditInfo(true)}
                   style={{ background: T.pillBg, border: "none", borderRadius: 99, color: T.text, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
@@ -911,7 +999,13 @@ export default function CollectionTracker() {
       )}
       {editInfo && detail && (
         <EntityModal title="Edit Collection" fields={COLLECTION_FIELDS} initial={detail}
-          onSubmit={async (form) => { await ctApi.update("collections", detail.id, form); await reload(); setEditInfo(false); }}
+          withFiles existingFiles={collectionFilesFor(detail.id)} onDeleteFile={deleteCollectionFile}
+          onSubmit={async (form, staged = []) => {
+            await ctApi.update("collections", detail.id, form);
+            for (const f of staged) await ctApi.uploadCollectionFile(detail.id, f);
+            await reload();
+            setEditInfo(false);
+          }}
           onDelete={async () => { await ctApi.remove("collections", detail.id); await reload(); setEditInfo(false); setDetailId(null); }}
           onClose={() => setEditInfo(false)} />
       )}

@@ -183,6 +183,15 @@ async function initDB() {
       data BYTEA,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS ct_collection_files (
+      id SERIAL PRIMARY KEY,
+      collection_id INTEGER NOT NULL REFERENCES ct_collections(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      mimetype TEXT DEFAULT 'application/octet-stream',
+      size INTEGER DEFAULT 0,
+      data BYTEA,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
   console.log('DB ready');
 }
@@ -630,9 +639,11 @@ app.get('/api/ct/data', async (req, res) => {
       const r = await pool.query(`SELECT * FROM ${cfg.table} ORDER BY ${orderBy}`);
       out[key] = r.rows;
     }
-    // Idea image metadata only (never the bytes) — bytes stream via /api/ct/idea-files/:id
+    // File metadata only (never the bytes) — bytes stream via the file endpoints
     const f = await pool.query('SELECT id, idea_id, filename, mimetype, size FROM ct_idea_files ORDER BY id');
     out.idea_files = f.rows;
+    const cf = await pool.query('SELECT id, collection_id, filename, mimetype, size FROM ct_collection_files ORDER BY id');
+    out.collection_files = cf.rows;
     res.json(out);
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
@@ -684,6 +695,39 @@ app.get('/api/ct/idea-files/:id', async (req, res) => {
 app.delete('/api/ct/idea-files/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM ct_idea_files WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Collection attachments — PDFs and pasted images on a collection
+app.post('/api/ct/collections/:id/files', async (req, res) => {
+  const { filename, mimetype, dataBase64 } = req.body;
+  if (!filename || !dataBase64) return res.status(400).json({ error: 'filename and dataBase64 are required' });
+  try {
+    const buf = Buffer.from(dataBase64, 'base64');
+    const r = await pool.query(
+      `INSERT INTO ct_collection_files (collection_id, filename, mimetype, size, data)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id, collection_id, filename, mimetype, size`,
+      [req.params.id, filename, mimetype || 'application/octet-stream', buf.length, buf]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/ct/collection-files/:id', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT filename, mimetype, data FROM ct_collection_files WHERE id=$1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'not found' });
+    const f = r.rows[0];
+    res.setHeader('Content-Type', f.mimetype || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(f.filename)}"`);
+    res.send(f.data);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/ct/collection-files/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ct_collection_files WHERE id=$1', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
