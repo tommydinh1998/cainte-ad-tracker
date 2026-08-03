@@ -649,6 +649,7 @@ export default function InfluencerTracker() {
   const [showAdd, setShowAdd] = useState(false);
   const [profileId, setProfileId] = useState(null);
   const [collabModal, setCollabModal] = useState(null);   // { creator, editCollab? }
+  const [showAllProfiles, setShowAllProfiles] = useState(false); // dashboard: collabs-per-influencer expanded
   const [sourcingModal, setSourcingModal] = useState(null); // { editEntry? } | null
   const [showSourcingModal, setShowSourcingModal] = useState(false);
 
@@ -774,12 +775,12 @@ export default function InfluencerTracker() {
   const spentYear = paidSpend(d => d.getFullYear() === curYear);
   const yearlyBudget = monthlyBudget * 12;
 
-  // Top 10 profiles by number of collaborations
-  const topCreators = creators
+  // Collabs per influencer, most first (dashboard shows top 10 unless expanded)
+  const creatorsByCollabs = creators
     .map(cr => ({ cr, count: (cr.collaborations || []).length, value: (cr.collaborations || []).reduce((s, c) => s + (Number(c.totalValue) || 0), 0) }))
     .filter(x => x.count > 0)
-    .sort((a, b) => b.count - a.count || b.value - a.value)
-    .slice(0, 10);
+    .sort((a, b) => b.count - a.count || b.value - a.value);
+  const topCreators = showAllProfiles ? creatorsByCollabs : creatorsByCollabs.slice(0, 10);
 
   // Top 5 most-sent products, split by creator gender
   const topProducts = (g) => {
@@ -917,22 +918,32 @@ export default function InfluencerTracker() {
 
             {/* Top 10 profiles + Top 5 products */}
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 24, alignItems: "flex-start" }}>
-              {/* Top 10 profiles */}
+              {/* Collabs per influencer */}
               <div style={{ flex: "1 1 320px", background: T.card, borderRadius: 14, border: `1px solid ${T.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "16px 18px" }}>
-                <div style={{ marginBottom: 12 }}><Label>Top 10 profiles <span style={{ color: T.textTert, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>· by collaborations</span></Label></div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <Label>Collabs per influencer <span style={{ color: T.textTert, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>· click to open</span></Label>
+                  {creatorsByCollabs.length > 10 && (
+                    <button onClick={() => setShowAllProfiles(v => !v)}
+                      style={{ background: T.pillBg, border: "none", borderRadius: 99, color: T.blue, fontSize: 12, fontWeight: 600, padding: "5px 12px", cursor: "pointer", flexShrink: 0 }}>
+                      {showAllProfiles ? "Show top 10" : `Show all (${creatorsByCollabs.length})`}
+                    </button>
+                  )}
+                </div>
                 {topCreators.length === 0 ? (
                   <div style={{ fontSize: 13, color: T.textSec, padding: "8px 0" }}>No collaborations yet.</div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     {topCreators.map(({ cr, count, value }, i) => (
-                      <button key={cr.id} onClick={() => setProfileId(cr.id)}
-                        style={{ display: "flex", alignItems: "center", gap: 10, background: "none", border: "none", borderRadius: 8, padding: "7px 6px", cursor: "pointer", textAlign: "left", width: "100%" }}>
+                      <div key={cr.id} onClick={() => setProfileId(cr.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 10, borderRadius: 8, padding: "7px 6px", cursor: "pointer" }}>
                         <span style={{ fontSize: 12, fontWeight: 700, color: T.textTert, width: 20, flexShrink: 0 }}>{i + 1}</span>
                         <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cr.name}</span>
                         {cr.rating > 0 && <StarRating value={cr.rating} size={11} readOnly />}
                         <span style={{ fontSize: 12, color: T.textSec, flexShrink: 0 }}>{count} collab{count !== 1 ? "s" : ""}</span>
                         {value > 0 && <span style={{ fontSize: 11, color: T.textTert, flexShrink: 0, minWidth: 64, textAlign: "right" }}>{kr(value)}</span>}
-                      </button>
+                        <button title={`New collab with ${cr.name}`} onClick={(e) => { e.stopPropagation(); openAddCollab(cr); }}
+                          style={{ background: T.blue + "18", border: "none", borderRadius: 99, width: 24, height: 24, cursor: "pointer", color: T.blue, fontSize: 14, fontWeight: 700, lineHeight: 1, flexShrink: 0 }}>+</button>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -1031,7 +1042,7 @@ export default function InfluencerTracker() {
                   const collabs = cr.collaborations || [];
                   const ongoing = collabs.filter(c => c.status === "upcoming" || c.status === "in_progress").length;
                   return (
-                    <button key={cr.id} onClick={() => setProfileId(cr.id)}
+                    <div key={cr.id} onClick={() => setProfileId(cr.id)}
                       style={{ textAlign: "left", background: T.card, borderRadius: 14, border: `1px solid ${T.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
                       <div style={{ width: 44, height: 44, borderRadius: "50%", background: PLATFORM_COLOR[cr.platform] + "22", color: PLATFORM_COLOR[cr.platform], display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, flexShrink: 0 }}>{initials(cr.name)}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1045,8 +1056,12 @@ export default function InfluencerTracker() {
                           {ongoing > 0 && <span style={{ color: T.orange }}> · {ongoing} ongoing</span>}
                         </div>
                       </div>
+                      <button onClick={(e) => { e.stopPropagation(); openAddCollab(cr); }}
+                        style={{ background: T.blue + "18", border: "none", borderRadius: 99, color: T.blue, fontSize: 13, fontWeight: 600, padding: "7px 14px", cursor: "pointer", flexShrink: 0 }}>
+                        + Collab
+                      </button>
                       <span style={{ fontSize: 18, color: T.textTert, flexShrink: 0 }}>›</span>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
