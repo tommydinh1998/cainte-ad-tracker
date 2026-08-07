@@ -42,7 +42,7 @@ async function initDB() {
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       profile_link TEXT DEFAULT '',
-      platform TEXT DEFAULT 'Meta',
+      platform TEXT DEFAULT 'Instagram',
       rating INTEGER DEFAULT 0,
       rating_tags JSONB DEFAULT '[]',
       rating_note TEXT DEFAULT '',
@@ -66,7 +66,7 @@ async function initDB() {
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       profile_link TEXT DEFAULT '',
-      platform TEXT DEFAULT 'Meta',
+      platform TEXT DEFAULT 'Instagram',
       comment TEXT DEFAULT '',
       added_by TEXT DEFAULT '',
       created_at TIMESTAMPTZ DEFAULT NOW()
@@ -107,6 +107,32 @@ async function initDB() {
       monthly_budget NUMERIC DEFAULT 0
     );
     INSERT INTO app_settings (id, monthly_budget) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;
+  `);
+  // Per-collaboration platform (Instagram / TikTok / Both) + delivered content pieces.
+  // "Meta" was the old label for Instagram — normalised here so the UI has one vocabulary.
+  await pool.query(`
+    ALTER TABLE collaborations ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT '';
+    UPDATE creators SET platform='Instagram' WHERE platform='Meta';
+    UPDATE sourcing SET platform='Instagram' WHERE platform='Meta';
+    CREATE TABLE IF NOT EXISTS content_pieces (
+      id SERIAL PRIMARY KEY,
+      collab_id INTEGER NOT NULL REFERENCES collaborations(id) ON DELETE CASCADE,
+      type TEXT DEFAULT 'Reel',
+      platform TEXT DEFAULT '',
+      qty INTEGER DEFAULT 1,
+      posted_on TEXT DEFAULT '',
+      link TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS content_pieces_collab_idx ON content_pieces (collab_id);
+  `);
+  // Backfill: collaborations created before the per-collab platform field inherit the creator's.
+  await pool.query(`
+    UPDATE collaborations c SET platform = cr.platform
+    FROM creators cr
+    WHERE c.creator_id = cr.id AND (c.platform IS NULL OR c.platform = '')
+      AND cr.platform IN ('Instagram','TikTok','Both');
   `);
   // ── Collection Tracker ──────────────────────────────────────────────
   await pool.query(`
@@ -364,11 +390,24 @@ const mapAttachment = (a) => ({
   size:     a.size || 0,
 });
 
-const mapCollab = (c, attachments = []) => ({
+const mapContent = (p) => ({
+  id:       p.id,
+  collabId: p.collab_id,
+  type:     p.type || 'Reel',
+  platform: p.platform || '',
+  qty:      p.qty || 1,
+  postedOn: p.posted_on || '',
+  link:     p.link || '',
+  notes:    p.notes || '',
+});
+
+const mapCollab = (c, attachments = [], content = []) => ({
   id:           c.id,
   creatorId:    c.creator_id,
   type:         c.type,
   status:       c.status,
+  platform:     c.platform || '',
+  content:      content.filter(p => p.collab_id === c.id).map(mapContent),
   deliverables: c.deliverables || [],
   products:     c.products || [],
   productCount: c.product_count || 0,
@@ -380,7 +419,7 @@ const mapCollab = (c, attachments = []) => ({
   updatedAt:    c.updated_at,
 });
 
-const mapCreator = (cr, collabs, attachments = []) => ({
+const mapCreator = (cr, collabs, attachments = [], content = []) => ({
   id:            cr.id,
   name:          cr.name,
   profileLink:   cr.profile_link,
@@ -390,7 +429,7 @@ const mapCreator = (cr, collabs, attachments = []) => ({
   ratingTags:    cr.rating_tags || [],
   ratingNote:    cr.rating_note || '',
   createdAt:     cr.created_at,
-  collaborations: collabs.filter(c => c.creator_id === cr.id).map(c => mapCollab(c, attachments)),
+  collaborations: collabs.filter(c => c.creator_id === cr.id).map(c => mapCollab(c, attachments, content)),
 });
 
 const mapSourcing = (s) => ({
@@ -403,16 +442,34 @@ const mapSourcing = (s) => ({
   createdAt:   s.created_at,
 });
 
+// Content pieces are edited as a whole list on the collaboration, so a save
+// replaces the rows for that collaboration (ids are not referenced anywhere).
+async function replaceContent(client, collabId, list) {
+  await client.query('DELETE FROM content_pieces WHERE collab_id=$1', [collabId]);
+  const rows = [];
+  for (const p of list) {
+    if (!p || !p.type) continue;
+    const r = await client.query(
+      `INSERT INTO content_pieces (collab_id,type,platform,qty,posted_on,link,notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [collabId, p.type, p.platform || '', Math.max(1, Number(p.qty) || 1), (p.postedOn || '').slice(0, 10), p.link || '', p.notes || '']
+    );
+    rows.push(r.rows[0]);
+  }
+  return rows;
+}
+
 // Insert a collaboration row (used by create-creator + add-collaboration)
 async function insertCollaboration(client, creatorId, c) {
   const r = await client.query(
     `INSERT INTO collaborations
-       (creator_id,type,status,deliverables,products,product_count,total_value,responsible,notes)
-     VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9) RETURNING *`,
+       (creator_id,type,status,platform,deliverables,products,product_count,total_value,responsible,notes)
+     VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10) RETURNING *`,
     [
       creatorId,
       c.type || 'Gifting',
       c.status || 'upcoming',
+      c.platform || '',
       JSON.stringify(c.deliverables || []),
       JSON.stringify(c.products || []),
       c.productCount || 0,
@@ -421,7 +478,9 @@ async function insertCollaboration(client, creatorId, c) {
       c.notes || '',
     ]
   );
-  return r.rows[0];
+  const row = r.rows[0];
+  const content = Array.isArray(c.content) ? await replaceContent(client, row.id, c.content) : [];
+  return { row, content };
 }
 
 app.get('/api/creators', async (req, res) => {
@@ -430,7 +489,8 @@ app.get('/api/creators', async (req, res) => {
     const coRes = await pool.query('SELECT * FROM collaborations ORDER BY created_at DESC');
     // Attachment metadata only (never the file bytes) — bytes are streamed via /api/files/:id
     const atRes = await pool.query('SELECT id, collab_id, filename, mimetype, size FROM attachments ORDER BY created_at ASC');
-    res.json(crRes.rows.map(cr => mapCreator(cr, coRes.rows, atRes.rows)));
+    const cpRes = await pool.query('SELECT * FROM content_pieces ORDER BY posted_on DESC, id DESC');
+    res.json(crRes.rows.map(cr => mapCreator(cr, coRes.rows, atRes.rows, cpRes.rows)));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
@@ -441,15 +501,18 @@ app.post('/api/creators', async (req, res) => {
     await client.query('BEGIN');
     const crRes = await client.query(
       `INSERT INTO creators (name,profile_link,platform,gender) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [name, profileLink || '', platform || 'Meta', gender || '']
+      [name, profileLink || '', platform || 'Instagram', gender || '']
     );
     const creator = crRes.rows[0];
     const collabs = [];
+    let content = [];
     if (collaboration) {
-      collabs.push(await insertCollaboration(client, creator.id, collaboration));
+      const ins = await insertCollaboration(client, creator.id, collaboration);
+      collabs.push(ins.row);
+      content = ins.content;
     }
     await client.query('COMMIT');
-    res.json(mapCreator(creator, collabs));
+    res.json(mapCreator(creator, collabs, [], content));
   } catch (e) {
     await client.query('ROLLBACK');
     console.error(e); res.status(500).json({ error: e.message });
@@ -461,7 +524,7 @@ app.put('/api/creators/:id', async (req, res) => {
   try {
     await pool.query(
       `UPDATE creators SET name=$1, profile_link=$2, platform=$3, gender=$4, rating=$5, rating_tags=$6::jsonb, rating_note=$7 WHERE id=$8`,
-      [name, profileLink || '', platform || 'Meta', gender || '', rating || 0, JSON.stringify(ratingTags || []), ratingNote || '', req.params.id]
+      [name, profileLink || '', platform || 'Instagram', gender || '', rating || 0, JSON.stringify(ratingTags || []), ratingNote || '', req.params.id]
     );
     res.json({ success: true });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
@@ -497,28 +560,74 @@ app.delete('/api/creators/:id', async (req, res) => {
 app.post('/api/creators/:id/collaborations', async (req, res) => {
   const client = await pool.connect();
   try {
-    const row = await insertCollaboration(client, req.params.id, req.body);
-    res.json(mapCollab(row));
+    const { row, content } = await insertCollaboration(client, req.params.id, req.body);
+    res.json(mapCollab(row, [], content));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
   finally { client.release(); }
 });
 
 app.put('/api/collaborations/:id', async (req, res) => {
-  const { type, status, deliverables, products, productCount, totalValue, responsible, notes } = req.body;
+  const { type, status, platform, deliverables, products, productCount, totalValue, responsible, notes, content } = req.body;
+  const client = await pool.connect();
   try {
-    const r = await pool.query(
+    await client.query('BEGIN');
+    const r = await client.query(
       `UPDATE collaborations SET
-         type=$1, status=$2, deliverables=$3::jsonb, products=$4::jsonb,
-         product_count=$5, total_value=$6, responsible=$7, notes=$8, updated_at=NOW()
-       WHERE id=$9 RETURNING *`,
+         type=$1, status=$2, platform=$3, deliverables=$4::jsonb, products=$5::jsonb,
+         product_count=$6, total_value=$7, responsible=$8, notes=$9, updated_at=NOW()
+       WHERE id=$10 RETURNING *`,
       [
-        type || 'Gifting', status || 'upcoming',
+        type || 'Gifting', status || 'upcoming', platform || '',
         JSON.stringify(deliverables || []), JSON.stringify(products || []),
         productCount || 0, totalValue || 0, responsible || '', notes || '', req.params.id,
       ]
     );
-    res.json(r.rows[0] ? mapCollab(r.rows[0]) : { success: true });
+    // Only touch content when the caller actually sent a list — never wipe it implicitly.
+    let rows = [];
+    if (Array.isArray(content)) {
+      rows = await replaceContent(client, req.params.id, content);
+    } else {
+      rows = (await client.query('SELECT * FROM content_pieces WHERE collab_id=$1', [req.params.id])).rows;
+    }
+    await client.query('COMMIT');
+    res.json(r.rows[0] ? mapCollab(r.rows[0], [], rows) : { success: true });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error(e); res.status(500).json({ error: e.message });
+  } finally { client.release(); }
+});
+
+// ── Content pieces (delivered content per collaboration) ──────────────────────
+// Quick-add from the collaboration card / content tab, without opening the editor.
+app.post('/api/collaborations/:id/content', async (req, res) => {
+  const { type, platform, qty, postedOn, link, notes } = req.body;
+  try {
+    const r = await pool.query(
+      `INSERT INTO content_pieces (collab_id,type,platform,qty,posted_on,link,notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [req.params.id, type || 'Reel', platform || '', Math.max(1, Number(qty) || 1), (postedOn || '').slice(0, 10), link || '', notes || '']
+    );
+    res.json(mapContent(r.rows[0]));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/content/:id', async (req, res) => {
+  const { type, platform, qty, postedOn, link, notes } = req.body;
+  try {
+    const r = await pool.query(
+      `UPDATE content_pieces SET type=$1, platform=$2, qty=$3, posted_on=$4, link=$5, notes=$6
+       WHERE id=$7 RETURNING *`,
+      [type || 'Reel', platform || '', Math.max(1, Number(qty) || 1), (postedOn || '').slice(0, 10), link || '', notes || '', req.params.id]
+    );
+    res.json(r.rows[0] ? mapContent(r.rows[0]) : { success: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/content/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM content_pieces WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/api/collaborations/:id', async (req, res) => {
@@ -581,7 +690,7 @@ app.post('/api/sourcing', async (req, res) => {
   try {
     const r = await pool.query(
       `INSERT INTO sourcing (name,profile_link,platform,comment,added_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [name, profileLink || '', platform || 'Meta', comment || '', addedBy || '']
+      [name, profileLink || '', platform || 'Instagram', comment || '', addedBy || '']
     );
     res.json(mapSourcing(r.rows[0]));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
@@ -592,7 +701,7 @@ app.put('/api/sourcing/:id', async (req, res) => {
   try {
     await pool.query(
       `UPDATE sourcing SET name=$1, profile_link=$2, platform=$3, comment=$4, added_by=$5 WHERE id=$6`,
-      [name, profileLink || '', platform || 'Meta', comment || '', addedBy || '', req.params.id]
+      [name, profileLink || '', platform || 'Instagram', comment || '', addedBy || '', req.params.id]
     );
     res.json({ success: true });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
