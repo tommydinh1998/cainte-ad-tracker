@@ -134,6 +134,30 @@ async function initDB() {
     WHERE c.creator_id = cr.id AND (c.platform IS NULL OR c.platform = '')
       AND cr.platform IN ('Instagram','TikTok','Both');
   `);
+  // ── Multi-brand ─────────────────────────────────────────────────────
+  // Each brand runs the same three products over its own data. Only the root
+  // tables carry a brand; children hang off them, and everything addressed by
+  // a globally-unique id needs no scoping. Existing rows are all Cainté.
+  await pool.query(`
+    ALTER TABLE batches        ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    ALTER TABLE creators       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    ALTER TABLE sourcing       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    ALTER TABLE ct_collections ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    ALTER TABLE ct_ideas       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    CREATE INDEX IF NOT EXISTS batches_brand_idx        ON batches (brand);
+    CREATE INDEX IF NOT EXISTS creators_brand_idx       ON creators (brand);
+    CREATE INDEX IF NOT EXISTS sourcing_brand_idx       ON sourcing (brand);
+    CREATE INDEX IF NOT EXISTS ct_collections_brand_idx ON ct_collections (brand);
+    CREATE INDEX IF NOT EXISTS ct_ideas_brand_idx       ON ct_ideas (brand);
+  `);
+  // The budget setting becomes one row per brand (id 1 = cainte, id 2 = elle).
+  await pool.query(`
+    ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS brand TEXT;
+    UPDATE app_settings SET brand='cainte' WHERE id=1 AND brand IS NULL;
+    INSERT INTO app_settings (id, brand, monthly_budget) VALUES (2,'elle',0)
+      ON CONFLICT (id) DO NOTHING;
+    CREATE UNIQUE INDEX IF NOT EXISTS app_settings_brand_idx ON app_settings (brand);
+  `);
   // ── Collection Tracker ──────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ct_collections (
@@ -255,10 +279,21 @@ const mapBatch = (b, ads, comments = []) => ({
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
+// Active brand for a request. Whitelisted — an unknown or missing header falls
+// back to Cainté, so an un-branded client can never reach another brand's data.
+const BRANDS = ['cainte', 'elle'];
+const brandOf = (req) => {
+  const b = String(req.get('x-brand') || '').toLowerCase();
+  return BRANDS.includes(b) ? b : 'cainte';
+};
+
 app.get('/api/batches', async (req, res) => {
   try {
-    const batchRes = await pool.query('SELECT * FROM batches ORDER BY created_at DESC');
-    const adRes    = await pool.query('SELECT * FROM ads ORDER BY sort_order ASC, id ASC');
+    const brand = brandOf(req);
+    const batchRes = await pool.query('SELECT * FROM batches WHERE brand=$1 ORDER BY created_at DESC', [brand]);
+    // Ads/comments are keyed off the batch, and ad_id comes from a global
+    // sequence, so no brand filter is needed beyond the batch scope.
+    const adRes    = await pool.query('SELECT * FROM ads WHERE batch_id IN (SELECT id FROM batches WHERE brand=$1) ORDER BY sort_order ASC, id ASC', [brand]);
     const comRes   = await pool.query('SELECT * FROM ad_comments ORDER BY created_at ASC');
     res.json(batchRes.rows.map(b => mapBatch(b, adRes.rows, comRes.rows)));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
@@ -270,8 +305,8 @@ app.post('/api/batches', async (req, res) => {
   try {
     await client.query('BEGIN');
     const bRes = await client.query(
-      `INSERT INTO batches (name,platform,link,notes,submitted_by,creator_handle) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [name, platform, link||'', notes||'', submittedBy||'', creatorHandle||'']
+      `INSERT INTO batches (name,platform,link,notes,submitted_by,creator_handle,brand) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [name, platform, link||'', notes||'', submittedBy||'', creatorHandle||'', brandOf(req)]
     );
     const batch = bRes.rows[0];
     const insertedAds = [];
@@ -485,11 +520,13 @@ async function insertCollaboration(client, creatorId, c) {
 
 app.get('/api/creators', async (req, res) => {
   try {
-    const crRes = await pool.query('SELECT * FROM creators ORDER BY created_at DESC');
-    const coRes = await pool.query('SELECT * FROM collaborations ORDER BY created_at DESC');
+    const brand = brandOf(req);
+    const inBrand = 'creator_id IN (SELECT id FROM creators WHERE brand=$1)';
+    const crRes = await pool.query('SELECT * FROM creators WHERE brand=$1 ORDER BY created_at DESC', [brand]);
+    const coRes = await pool.query(`SELECT * FROM collaborations WHERE ${inBrand} ORDER BY created_at DESC`, [brand]);
     // Attachment metadata only (never the file bytes) — bytes are streamed via /api/files/:id
-    const atRes = await pool.query('SELECT id, collab_id, filename, mimetype, size FROM attachments ORDER BY created_at ASC');
-    const cpRes = await pool.query('SELECT * FROM content_pieces ORDER BY posted_on DESC, id DESC');
+    const atRes = await pool.query(`SELECT id, collab_id, filename, mimetype, size FROM attachments WHERE collab_id IN (SELECT id FROM collaborations WHERE ${inBrand}) ORDER BY created_at ASC`, [brand]);
+    const cpRes = await pool.query(`SELECT * FROM content_pieces WHERE collab_id IN (SELECT id FROM collaborations WHERE ${inBrand}) ORDER BY posted_on DESC, id DESC`, [brand]);
     res.json(crRes.rows.map(cr => mapCreator(cr, coRes.rows, atRes.rows, cpRes.rows)));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
@@ -500,8 +537,8 @@ app.post('/api/creators', async (req, res) => {
   try {
     await client.query('BEGIN');
     const crRes = await client.query(
-      `INSERT INTO creators (name,profile_link,platform,gender) VALUES ($1,$2,$3,$4) RETURNING *`,
-      [name, profileLink || '', platform || 'Instagram', gender || '']
+      `INSERT INTO creators (name,profile_link,platform,gender,brand) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [name, profileLink || '', platform || 'Instagram', gender || '', brandOf(req)]
     );
     const creator = crRes.rows[0];
     const collabs = [];
@@ -533,7 +570,7 @@ app.put('/api/creators/:id', async (req, res) => {
 // ── App settings (budget) ─────────────────────────────────────────────────────
 app.get('/api/settings', async (req, res) => {
   try {
-    const r = await pool.query('SELECT monthly_budget FROM app_settings WHERE id=1');
+    const r = await pool.query('SELECT monthly_budget FROM app_settings WHERE brand=$1', [brandOf(req)]);
     res.json({ monthlyBudget: r.rows[0] ? Number(r.rows[0].monthly_budget) : 0 });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
@@ -542,9 +579,8 @@ app.put('/api/settings', async (req, res) => {
   const { monthlyBudget } = req.body;
   try {
     await pool.query(
-      `INSERT INTO app_settings (id, monthly_budget) VALUES (1, $1)
-       ON CONFLICT (id) DO UPDATE SET monthly_budget = $1`,
-      [Number(monthlyBudget) || 0]
+      `UPDATE app_settings SET monthly_budget=$1 WHERE brand=$2`,
+      [Number(monthlyBudget) || 0, brandOf(req)]
     );
     res.json({ success: true });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
@@ -680,7 +716,7 @@ app.delete('/api/files/:id', async (req, res) => {
 
 app.get('/api/sourcing', async (req, res) => {
   try {
-    const r = await pool.query('SELECT * FROM sourcing ORDER BY created_at DESC');
+    const r = await pool.query('SELECT * FROM sourcing WHERE brand=$1 ORDER BY created_at DESC', [brandOf(req)]);
     res.json(r.rows.map(mapSourcing));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
@@ -689,8 +725,8 @@ app.post('/api/sourcing', async (req, res) => {
   const { name, profileLink, platform, comment, addedBy } = req.body;
   try {
     const r = await pool.query(
-      `INSERT INTO sourcing (name,profile_link,platform,comment,added_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [name, profileLink || '', platform || 'Instagram', comment || '', addedBy || '']
+      `INSERT INTO sourcing (name,profile_link,platform,comment,added_by,brand) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [name, profileLink || '', platform || 'Instagram', comment || '', addedBy || '', brandOf(req)]
     );
     res.json(mapSourcing(r.rows[0]));
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
@@ -742,16 +778,21 @@ const ctPick = (key, body) => {
 // One payload with everything — the frontend derives dashboard/calendar/filters.
 app.get('/api/ct/data', async (req, res) => {
   try {
+    const brand = brandOf(req);
+    const inBrand = 'collection_id IN (SELECT id FROM ct_collections WHERE brand=$1)';
     const out = {};
     for (const [key, cfg] of Object.entries(CT)) {
       const orderBy = key === 'collections' ? 'launch_date NULLS LAST, id' : 'id';
-      const r = await pool.query(`SELECT * FROM ${cfg.table} ORDER BY ${orderBy}`);
+      // collections and ideas are roots and carry the brand themselves; every
+      // other ct_* table hangs off a collection.
+      const where = (key === 'collections') ? 'brand=$1' : (key === 'ideas') ? 'brand=$1' : inBrand;
+      const r = await pool.query(`SELECT * FROM ${cfg.table} WHERE ${where} ORDER BY ${orderBy}`, [brand]);
       out[key] = r.rows;
     }
     // File metadata only (never the bytes) — bytes stream via the file endpoints
-    const f = await pool.query('SELECT id, idea_id, filename, mimetype, size FROM ct_idea_files ORDER BY id');
+    const f = await pool.query('SELECT id, idea_id, filename, mimetype, size FROM ct_idea_files WHERE idea_id IN (SELECT id FROM ct_ideas WHERE brand=$1) ORDER BY id', [brand]);
     out.idea_files = f.rows;
-    const cf = await pool.query('SELECT id, collection_id, filename, mimetype, size FROM ct_collection_files ORDER BY id');
+    const cf = await pool.query(`SELECT id, collection_id, filename, mimetype, size FROM ct_collection_files WHERE ${inBrand} ORDER BY id`, [brand]);
     out.collection_files = cf.rows;
     res.json(out);
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
@@ -760,6 +801,7 @@ app.get('/api/ct/data', async (req, res) => {
 app.post('/api/ct/collections', async (req, res) => {
   try {
     const { cols, vals } = ctPick('collections', req.body);
+    cols.push('brand'); vals.push(brandOf(req));
     const ph = cols.map((_, i) => `$${i + 1}`).join(',');
     const r = await pool.query(`INSERT INTO ct_collections (${cols.join(',')}) VALUES (${ph}) RETURNING *`, vals);
     res.json(r.rows[0]);
@@ -770,6 +812,7 @@ app.post('/api/ct/collections', async (req, res) => {
 app.post('/api/ct/ideas', async (req, res) => {
   try {
     const { cols, vals } = ctPick('ideas', req.body);
+    cols.push('brand'); vals.push(brandOf(req));
     const ph = cols.map((_, i) => `$${i + 1}`).join(',');
     const r = await pool.query(`INSERT INTO ct_ideas (${cols.join(',')}) VALUES (${ph}) RETURNING *`, vals);
     res.json(r.rows[0]);

@@ -3,6 +3,7 @@ import { T } from "./theme.jsx";
 import AdTracker from "./AdTracker.jsx";
 import InfluencerTracker from "./InfluencerTracker.jsx";
 import CollectionTracker from "./CollectionTracker.jsx";
+import { BRANDS, getBrand, setBrand } from "./brand.js";
 
 const PRODUCTS = [
   { key: "ads",        label: "Ad Tracker" },
@@ -15,6 +16,7 @@ export default function App() {
   const [pwInput, setPwInput] = useState("");
   const [pwError, setPwError] = useState(false);
   const [product, setProduct] = useState(() => sessionStorage.getItem("cainte_product") || "ads");
+  const [brand,   setBrandState] = useState(getBrand);
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -31,6 +33,13 @@ export default function App() {
   const switchProduct = (key) => {
     setProduct(key);
     sessionStorage.setItem("cainte_product", key);
+  };
+
+  // Switching brand remounts the active tracker (see key={brand} below), which
+  // re-runs its initial fetch against the new brand.
+  const switchBrand = (key) => {
+    setBrand(key);
+    setBrandState(key);
   };
 
   // ── Password gate ──────────────────────────────────────────────────────────
@@ -74,8 +83,20 @@ export default function App() {
 
       {/* ── Top-level product switch ── */}
       <div style={{ borderBottom:`1px solid ${T.border}`, background:"#fff" }}>
-        <div style={{ maxWidth:1100, margin:"0 auto", padding:"10px 32px", display:"flex", alignItems:"center", gap:14 }}>
-          <span style={{ fontSize:13, fontWeight:800, letterSpacing:"0.02em", color:T.text }}>CAINTE</span>
+        <div style={{ maxWidth:1100, margin:"0 auto", padding:"10px 32px", display:"flex", alignItems:"center", gap:14, flexWrap:"wrap" }}>
+          {/* Brand switch — same three products, separate data per brand */}
+          <div style={{ display:"flex", gap:4, background:T.pillBg, borderRadius:99, padding:3 }}>
+            {BRANDS.map(b => {
+              const active = brand === b.key;
+              return (
+                <button key={b.key} onClick={() => switchBrand(b.key)} title={`Switch to ${b.label}`}
+                  style={{ padding:"7px 15px", borderRadius:99, border:"none", cursor:"pointer", fontSize:12, fontWeight:800, letterSpacing:"0.06em", textTransform:"uppercase", background:active?b.color:"transparent", color:active?"#fff":T.textSec, boxShadow:active?`0 1px 6px ${b.color}55`:"none", transition:"all 0.15s" }}>
+                  {b.label}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ width:1, height:20, background:T.border }} />
           <div style={{ display:"flex", gap:4, background:T.pillBg, borderRadius:99, padding:3 }}>
             {PRODUCTS.map(p => {
               const active = product === p.key;
@@ -90,7 +111,11 @@ export default function App() {
         </div>
       </div>
 
-      {product === "ads" ? <AdTracker /> : product === "influencer" ? <InfluencerTracker /> : <CollectionTracker />}
+      {product === "ads"
+        ? <AdTracker key={brand} />
+        : product === "influencer"
+          ? <InfluencerTracker key={brand} />
+          : <CollectionTracker key={brand} />}
     </div>
   );
 }

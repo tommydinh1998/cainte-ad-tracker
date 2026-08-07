@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { T, Chip } from "./theme.jsx";
+import { api } from "./brand.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const GRAY = "#8E8E93";
@@ -111,16 +112,16 @@ const COLLECTION_FIELDS = [
 // ── API ──────────────────────────────────────────────────────────────────────
 const jreq = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const ctApi = {
-  data: () => fetch("/api/ct/data").then((r) => r.json()),
-  createCollection: (b) => fetch("/api/ct/collections", jreq("POST", b)).then((r) => r.json()),
-  createChild: (cid, key, b) => fetch(`/api/ct/collections/${cid}/${key}`, jreq("POST", b)).then((r) => r.json()),
-  update: (key, id, b) => fetch(`/api/ct/${key}/${id}`, jreq("PUT", b)).then((r) => r.json()),
-  remove: (key, id) => fetch(`/api/ct/${key}/${id}`, { method: "DELETE" }),
-  createIdea: (b) => fetch("/api/ct/ideas", jreq("POST", b)).then((r) => r.json()),
-  uploadIdeaFile: (ideaId, f) => fetch(`/api/ct/ideas/${ideaId}/files`, jreq("POST", { filename: f.name, mimetype: f.type, dataBase64: f.dataBase64 })).then((r) => r.json()),
-  removeIdeaFile: (id) => fetch(`/api/ct/idea-files/${id}`, { method: "DELETE" }),
-  uploadCollectionFile: (cid, f) => fetch(`/api/ct/collections/${cid}/files`, jreq("POST", { filename: f.name, mimetype: f.type, dataBase64: f.dataBase64 })).then((r) => r.json()),
-  removeCollectionFile: (id) => fetch(`/api/ct/collection-files/${id}`, { method: "DELETE" }),
+  data: () => api("/api/ct/data").then((r) => r.json()),
+  createCollection: (b) => api("/api/ct/collections", jreq("POST", b)).then((r) => r.json()),
+  createChild: (cid, key, b) => api(`/api/ct/collections/${cid}/${key}`, jreq("POST", b)).then((r) => r.json()),
+  update: (key, id, b) => api(`/api/ct/${key}/${id}`, jreq("PUT", b)).then((r) => r.json()),
+  remove: (key, id) => api(`/api/ct/${key}/${id}`, { method: "DELETE" }),
+  createIdea: (b) => api("/api/ct/ideas", jreq("POST", b)).then((r) => r.json()),
+  uploadIdeaFile: (ideaId, f) => api(`/api/ct/ideas/${ideaId}/files`, jreq("POST", { filename: f.name, mimetype: f.type, dataBase64: f.dataBase64 })).then((r) => r.json()),
+  removeIdeaFile: (id) => api(`/api/ct/idea-files/${id}`, { method: "DELETE" }),
+  uploadCollectionFile: (cid, f) => api(`/api/ct/collections/${cid}/files`, jreq("POST", { filename: f.name, mimetype: f.type, dataBase64: f.dataBase64 })).then((r) => r.json()),
+  removeCollectionFile: (id) => api(`/api/ct/collection-files/${id}`, { method: "DELETE" }),
 };
 
 // ── Image staging (Inspiration bank) ─────────────────────────────────────────

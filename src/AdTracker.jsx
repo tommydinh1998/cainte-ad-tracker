@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { T, fmt, daysBetween, Chip, Label, IconBtn, StatusBtn, Field } from "./theme.jsx";
+import { api, brandMeta } from "./brand.js";
 
 const PLATFORMS = ["Meta", "TikTok", "Boosting"];
 const SLACK_CHANNEL = "C0B6UQRJC9E";
@@ -35,7 +36,7 @@ const sendSlackNotification = async (batch, ad, issueNote, assignedTo) => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514", max_tokens: 1000,
-        messages: [{ role: "user", content: `Send a Slack message to channel ${SLACK_CHANNEL} with this content:\n🚨 *Ad Issue Flagged*\n*Batch:* ${batch.name} (${batch.platform})\n*Ad:* ${ad.adId} · ${ad.name}\n${batch.creatorHandle ? `*Creator:* ${batch.creatorHandle}\n` : ""}*Issue:* ${issueNote}\n*Action required by:* ${assignedTo}\n*Submitted by:* ${batch.submittedBy}` }],
+        messages: [{ role: "user", content: `Send a Slack message to channel ${SLACK_CHANNEL} with this content:\n🚨 *Ad Issue Flagged*\n*Brand:* ${brandMeta().label}\n*Batch:* ${batch.name} (${batch.platform})\n*Ad:* ${ad.adId} · ${ad.name}\n${batch.creatorHandle ? `*Creator:* ${batch.creatorHandle}\n` : ""}*Issue:* ${issueNote}\n*Action required by:* ${assignedTo}\n*Submitted by:* ${batch.submittedBy}` }],
         mcp_servers: [{ type: "url", url: "https://mcp.slack.com/mcp", name: "slack" }]
       })
     });
@@ -690,7 +691,7 @@ export default function AdTracker() {
 
   // Load all batches from API on mount
   useEffect(() => {
-    fetch("/api/batches")
+    api("/api/batches")
       .then(r => r.json())
       .then(data => { setBatches(data); setLoading(false); })
       .catch(() => setLoading(false));
@@ -707,7 +708,7 @@ export default function AdTracker() {
       })}
     ));
     // Persist to DB
-    await fetch(`/api/ads/${adId}`, {
+    await api(`/api/ads/${adId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus, issueNote: issueNote||"", assignedTo: assignedTo||"" })
@@ -716,12 +717,12 @@ export default function AdTracker() {
 
   const handleDelete = async (id) => {
     setBatches(prev => prev.filter(b => b.id !== id));
-    await fetch(`/api/batches/${id}`, { method: "DELETE" });
+    await api(`/api/batches/${id}`, { method: "DELETE" });
   };
 
   // Issue replies — matched by the stable display id (adId), which survives batch edits
   const handleAddComment = async (ad, author, body) => {
-    const res = await fetch("/api/comments", {
+    const res = await api("/api/comments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ adRef: ad.adId, author, body })
@@ -738,11 +739,11 @@ export default function AdTracker() {
       ...b,
       ads: b.ads.map(a => a.adId !== ad.adId ? a : { ...a, comments: (a.comments || []).filter(c => c.id !== commentId) })
     })));
-    await fetch(`/api/comments/${commentId}`, { method: "DELETE" });
+    await api(`/api/comments/${commentId}`, { method: "DELETE" });
   };
 
   const handleAdd = async (batch) => {
-    const res = await fetch("/api/batches", {
+    const res = await api("/api/batches", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(batch)
@@ -754,7 +755,7 @@ export default function AdTracker() {
   const handleEdit   = batch   => setEditingBatch(batch);
 
   const handleSave   = async (updated) => {
-    const res = await fetch(`/api/batches/${updated.id}`, {
+    const res = await api(`/api/batches/${updated.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updated)

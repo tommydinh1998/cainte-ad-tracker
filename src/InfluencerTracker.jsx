@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { T, fmt, daysBetween, Chip, Label, IconBtn, Field } from "./theme.jsx";
+import { api } from "./brand.js";
 
 const today = new Date();
 
@@ -276,7 +277,7 @@ const AttachmentsField = ({ collab, patch }) => {
   const removeStaged = (i) => patch({ _newFiles: staged.filter((_, j) => j !== i) });
   const deleteExisting = async (id) => {
     patch({ attachments: existing.filter(a => a.id !== id) });
-    await fetch(`/api/files/${id}`, { method: "DELETE" });
+    await api(`/api/files/${id}`, { method: "DELETE" });
   };
 
   const row = { display: "flex", alignItems: "center", gap: 8, background: T.bg, borderRadius: 9, padding: "8px 11px", marginBottom: 6 };
@@ -943,9 +944,9 @@ export default function InfluencerTracker() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/creators").then(r => r.json()),
-      fetch("/api/sourcing").then(r => r.json()),
-      fetch("/api/settings").then(r => r.json()),
+      api("/api/creators").then(r => r.json()),
+      api("/api/sourcing").then(r => r.json()),
+      api("/api/settings").then(r => r.json()),
     ]).then(([cr, so, st]) => { setCreators(cr); setSourcing(so); setMonthlyBudget(st.monthlyBudget || 0); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
@@ -954,17 +955,17 @@ export default function InfluencerTracker() {
     const val = Number(budgetInput) || 0;
     setMonthlyBudget(val);
     setEditingBudget(false);
-    await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ monthlyBudget: val }) });
+    await api("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ monthlyBudget: val }) });
   };
 
   // ── Creator/collab handlers ──
   const reload = async () => {
-    const cr = await fetch("/api/creators").then(r => r.json());
+    const cr = await api("/api/creators").then(r => r.json());
     setCreators(cr);
   };
   const uploadFiles = async (collabId, files) => {
     for (const f of files) {
-      await fetch(`/api/collaborations/${collabId}/files`, {
+      await api(`/api/collaborations/${collabId}/files`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename: f.name, mimetype: f.type, dataBase64: f.dataBase64 }),
       });
@@ -973,7 +974,7 @@ export default function InfluencerTracker() {
 
   const handleAddInfluencer = async (payload) => {
     const { _newFiles = [], ...collabData } = payload.collaboration || {};
-    const res = await fetch("/api/creators", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, collaboration: collabData }) });
+    const res = await api("/api/creators", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, collaboration: collabData }) });
     const saved = await res.json();
     setCreators(prev => [saved, ...prev]);
     const newCollabId = saved.collaborations?.[0]?.id;
@@ -982,18 +983,18 @@ export default function InfluencerTracker() {
 
   const handleUpdateCreator = async (creator) => {
     setCreators(prev => prev.map(c => c.id !== creator.id ? c : { ...c, name: creator.name, profileLink: creator.profileLink, platform: creator.platform, gender: creator.gender, rating: creator.rating, ratingTags: creator.ratingTags, ratingNote: creator.ratingNote }));
-    await fetch(`/api/creators/${creator.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(creator) });
+    await api(`/api/creators/${creator.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(creator) });
   };
 
   const handleDeleteCreator = async (id) => {
     setCreators(prev => prev.filter(c => c.id !== id));
     if (profileId === id) setProfileId(null);
-    await fetch(`/api/creators/${id}`, { method: "DELETE" });
+    await api(`/api/creators/${id}`, { method: "DELETE" });
   };
 
   const handleAddCollab = async (creatorId, collab) => {
     const { _newFiles = [], ...collabData } = collab;
-    const res = await fetch(`/api/creators/${creatorId}/collaborations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collabData) });
+    const res = await api(`/api/creators/${creatorId}/collaborations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collabData) });
     const saved = await res.json();
     setCreators(prev => prev.map(c => c.id !== creatorId ? c : { ...c, collaborations: [saved, ...(c.collaborations || [])] }));
     if (_newFiles.length && saved.id) { await uploadFiles(saved.id, _newFiles); await reload(); }
@@ -1001,7 +1002,7 @@ export default function InfluencerTracker() {
 
   const handleUpdateCollab = async (creatorId, collab) => {
     const { _newFiles = [], ...collabData } = collab;
-    const res = await fetch(`/api/collaborations/${collab.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collabData) });
+    const res = await api(`/api/collaborations/${collab.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collabData) });
     const saved = await res.json();
     // preserve existing attachments (PUT response carries none) until a reload refreshes them
     setCreators(prev => prev.map(c => c.id !== creatorId ? c : { ...c, collaborations: c.collaborations.map(co => co.id !== collab.id ? co : { ...co, ...saved, attachments: co.attachments || [] }) }));
@@ -1010,17 +1011,17 @@ export default function InfluencerTracker() {
 
   const handleCollabStatus = async (creatorId, collabId, status) => {
     setCreators(prev => prev.map(c => c.id !== creatorId ? c : { ...c, collaborations: c.collaborations.map(co => co.id !== collabId ? co : { ...co, status }) }));
-    await fetch(`/api/collaborations/${collabId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    await api(`/api/collaborations/${collabId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
   };
 
   const handleDeleteCollab = async (creatorId, collabId) => {
     setCreators(prev => prev.map(c => c.id !== creatorId ? c : { ...c, collaborations: c.collaborations.filter(co => co.id !== collabId) }));
-    await fetch(`/api/collaborations/${collabId}`, { method: "DELETE" });
+    await api(`/api/collaborations/${collabId}`, { method: "DELETE" });
   };
 
   // Quick-log a single content piece without opening the full collaboration editor
   const handleAddContentPiece = async (creatorId, collabId, piece) => {
-    const res = await fetch(`/api/collaborations/${collabId}/content`, {
+    const res = await api(`/api/collaborations/${collabId}/content`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(piece),
     });
     const saved = await res.json();
@@ -1034,16 +1035,16 @@ export default function InfluencerTracker() {
   const handleSaveSourcing = async (entry) => {
     if (entry.id) {
       setSourcing(prev => prev.map(s => s.id !== entry.id ? s : { ...s, ...entry }));
-      await fetch(`/api/sourcing/${entry.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) });
+      await api(`/api/sourcing/${entry.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) });
     } else {
-      const res = await fetch("/api/sourcing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) });
+      const res = await api("/api/sourcing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) });
       const saved = await res.json();
       setSourcing(prev => [saved, ...prev]);
     }
   };
   const handleDeleteSourcing = async (id) => {
     setSourcing(prev => prev.filter(s => s.id !== id));
-    await fetch(`/api/sourcing/${id}`, { method: "DELETE" });
+    await api(`/api/sourcing/${id}`, { method: "DELETE" });
   };
 
   // modal openers wired to CollabCard signatures
