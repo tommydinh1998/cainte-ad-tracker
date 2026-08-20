@@ -243,6 +243,44 @@ async function initDB() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  // ── Kampagne Budget ─────────────────────────────────────────────────
+  // Campaigns are the brand-scoped root; expenses (posteringer) hang off a
+  // campaign, and receipts hang off an expense — same layering as the other
+  // products, so only kb_campaigns carries a brand column.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS kb_campaigns (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      name TEXT NOT NULL,
+      platform TEXT NOT NULL DEFAULT '',
+      budget NUMERIC NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'Active',
+      start_date DATE,
+      end_date DATE,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS kb_campaigns_brand_idx ON kb_campaigns (brand);
+    CREATE TABLE IF NOT EXISTS kb_expenses (
+      id SERIAL PRIMARY KEY,
+      campaign_id INTEGER NOT NULL REFERENCES kb_campaigns(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      amount NUMERIC NOT NULL DEFAULT 0,
+      expense_date DATE,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS kb_expenses_campaign_idx ON kb_expenses (campaign_id);
+    CREATE TABLE IF NOT EXISTS kb_expense_files (
+      id SERIAL PRIMARY KEY,
+      expense_id INTEGER NOT NULL REFERENCES kb_expenses(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      mimetype TEXT DEFAULT 'application/octet-stream',
+      size INTEGER DEFAULT 0,
+      data BYTEA,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
   console.log('DB ready');
 }
 
@@ -916,6 +954,127 @@ app.delete('/api/ct/:key/:id', async (req, res) => {
     await pool.query(`DELETE FROM ${CT[key].table} WHERE id=$1`, [Number(id)]);
     res.json({ success: true });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+// ── Kampagne Budget ───────────────────────────────────────────────────────────
+const kbDate = (v) => (v ? String(v).slice(0, 10) : null);
+// pg parses DATE columns to a JS Date at local midnight; serializing that to
+// UTC shifts it a day back for the client. Format from local components instead.
+const kbDateOut = (d) => {
+  if (!d) return null;
+  if (!(d instanceof Date)) return String(d).slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const mapKbCampaign = (r) => ({ ...r, start_date: kbDateOut(r.start_date), end_date: kbDateOut(r.end_date) });
+const mapKbExpense  = (r) => ({ ...r, expense_date: kbDateOut(r.expense_date) });
+
+// One payload with everything — the frontend derives totals and per-campaign spend.
+app.get('/api/kb/data', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const inBrand = 'campaign_id IN (SELECT id FROM kb_campaigns WHERE brand=$1)';
+    const cRes = await pool.query('SELECT * FROM kb_campaigns WHERE brand=$1 ORDER BY created_at DESC', [brand]);
+    const eRes = await pool.query(`SELECT * FROM kb_expenses WHERE ${inBrand} ORDER BY expense_date DESC NULLS LAST, id DESC`, [brand]);
+    // Receipt metadata only (never the bytes) — bytes stream via /api/kb/files/:id
+    const fRes = await pool.query(`SELECT id, expense_id, filename, mimetype, size FROM kb_expense_files WHERE expense_id IN (SELECT id FROM kb_expenses WHERE ${inBrand}) ORDER BY id`, [brand]);
+    res.json({ campaigns: cRes.rows.map(mapKbCampaign), expenses: eRes.rows.map(mapKbExpense), files: fRes.rows });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kb/campaigns', async (req, res) => {
+  const { name, platform, budget, status, start_date, end_date, notes } = req.body;
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+  try {
+    const r = await pool.query(
+      `INSERT INTO kb_campaigns (brand, name, platform, budget, status, start_date, end_date, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [brandOf(req), String(name).trim(), platform || '', Number(budget) || 0, status || 'Active', kbDate(start_date), kbDate(end_date), notes || '']
+    );
+    res.json(mapKbCampaign(r.rows[0]));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/kb/campaigns/:id', async (req, res) => {
+  const { name, platform, budget, status, start_date, end_date, notes } = req.body;
+  try {
+    const r = await pool.query(
+      `UPDATE kb_campaigns SET name=$1, platform=$2, budget=$3, status=$4, start_date=$5, end_date=$6, notes=$7
+       WHERE id=$8 RETURNING *`,
+      [name, platform || '', Number(budget) || 0, status || 'Active', kbDate(start_date), kbDate(end_date), notes || '', req.params.id]
+    );
+    res.json(r.rows[0] ? mapKbCampaign(r.rows[0]) : { success: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/kb/campaigns/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM kb_campaigns WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kb/campaigns/:id/expenses', async (req, res) => {
+  const { title, amount, expense_date, note } = req.body;
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'title is required' });
+  try {
+    const r = await pool.query(
+      `INSERT INTO kb_expenses (campaign_id, title, amount, expense_date, note)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.params.id, String(title).trim(), Number(amount) || 0, kbDate(expense_date), note || '']
+    );
+    res.json(mapKbExpense(r.rows[0]));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/kb/expenses/:id', async (req, res) => {
+  const { title, amount, expense_date, note } = req.body;
+  try {
+    const r = await pool.query(
+      `UPDATE kb_expenses SET title=$1, amount=$2, expense_date=$3, note=$4 WHERE id=$5 RETURNING *`,
+      [title, Number(amount) || 0, kbDate(expense_date), note || '', req.params.id]
+    );
+    res.json(r.rows[0] ? mapKbExpense(r.rows[0]) : { success: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/kb/expenses/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM kb_expenses WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Receipts — images and PDFs on an expense
+app.post('/api/kb/expenses/:id/files', async (req, res) => {
+  const { filename, mimetype, dataBase64 } = req.body;
+  if (!filename || !dataBase64) return res.status(400).json({ error: 'filename and dataBase64 are required' });
+  try {
+    const buf = Buffer.from(dataBase64, 'base64');
+    const r = await pool.query(
+      `INSERT INTO kb_expense_files (expense_id, filename, mimetype, size, data)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id, expense_id, filename, mimetype, size`,
+      [req.params.id, filename, mimetype || 'application/octet-stream', buf.length, buf]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/kb/files/:id', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT filename, mimetype, data FROM kb_expense_files WHERE id=$1', [req.params.id]);
+    if (!r.rows[0]) return res.status(404).json({ error: 'not found' });
+    const f = r.rows[0];
+    res.setHeader('Content-Type', f.mimetype || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(f.filename)}"`);
+    res.send(f.data);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/kb/files/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM kb_expense_files WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.use(express.static(path.join(__dirname, '../dist')));

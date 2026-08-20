@@ -3,12 +3,14 @@ import { T } from "./theme.jsx";
 import AdTracker from "./AdTracker.jsx";
 import InfluencerTracker from "./InfluencerTracker.jsx";
 import CollectionTracker from "./CollectionTracker.jsx";
+import BudgetTracker from "./BudgetTracker.jsx";
 import { BRANDS, getBrand, setBrand } from "./brand.js";
 
 const PRODUCTS = [
   { key: "ads",        label: "Ad Tracker" },
   { key: "influencer", label: "Influencer Tracker" },
   { key: "collection", label: "Collection Tracker" },
+  { key: "budget",     label: "Kampagne Budget" },
 ];
 
 export default function App() {
@@ -115,7 +117,9 @@ export default function App() {
         ? <AdTracker key={brand} />
         : product === "influencer"
           ? <InfluencerTracker key={brand} />
-          : <CollectionTracker key={brand} />}
+          : product === "collection"
+            ? <CollectionTracker key={brand} />
+            : <BudgetTracker key={brand} />}
     </div>
   );
 }
