@@ -950,6 +950,7 @@ export default function InfluencerTracker() {
   const [search, setSearch] = useState("");
   const [dashSearch, setDashSearch] = useState("");
   const [sourcingSearch, setSourcingSearch] = useState("");
+  const [contentSearch, setContentSearch] = useState("");
   const [fPlatform, setFPlatform] = useState("All");
   const [fStatus, setFStatus] = useState("All");
   const [fType, setFType] = useState("All");
@@ -1087,8 +1088,19 @@ export default function InfluencerTracker() {
     _platform: normPlatform(p.platform) || collabPlatform(cr, co),
   }))));
 
-  const contentFiltered = allPieces.filter(p =>
-    platformMatch(p._platform, fContentPlatform) && (fContentType === "All" || p.type === fContentType));
+  const contentQ = contentSearch.trim().toLowerCase();
+  const contentFiltered = allPieces.filter(p => {
+    if (!platformMatch(p._platform, fContentPlatform)) return false;
+    if (fContentType !== "All" && p.type !== fContentType) return false;
+    if (contentQ) {
+      const hay = [
+        p.creator.name, p.creator.profileLink, p.type, p.collab?.type, p.collab?.notes,
+        ...(p.collab?.products || []).map(x => x.name),
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(contentQ)) return false;
+    }
+    return true;
+  });
 
   const thisMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
   const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1);
@@ -1441,6 +1453,7 @@ export default function InfluencerTracker() {
               {["All", ...CONTENT_TYPES].map(t =>
                 pill(fContentType === t, t === "All" ? "All types" : t, () => setFContentType(t), t !== "All" ? CONTENT_COLOR[t] : null))}
               <div style={{ flex: 1 }} />
+              <SearchBox value={contentSearch} onChange={setContentSearch} placeholder="Search creators, products…" />
               <select value={contentYear} onChange={e => { setContentYear(Number(e.target.value)); setSelectedMonth(null); }} style={selectStyle}>
                 {contentYears.map(y => <option key={y} value={y}>{y}</option>)}
               </select>
