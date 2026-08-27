@@ -655,6 +655,19 @@ const CollabCard = ({ creator, collab, showCreator, onStatus, onEdit, onDelete, 
   );
 };
 
+// ── Search box (shared by the Dashboard, Influencers and Sourcing tabs) ──────
+const SearchBox = ({ value, onChange, placeholder }) => (
+  <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 340 }}>
+    <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: T.textTert, pointerEvents: "none" }}>🔍</span>
+    <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      style={{ width: "100%", background: T.inputBg, border: "none", borderRadius: 12, padding: "10px 30px 10px 36px", color: T.text, fontSize: 14, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+    {value && (
+      <button onClick={() => onChange("")} title="Clear"
+        style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: T.textTert, cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 4 }}>✕</button>
+    )}
+  </div>
+);
+
 // ── Stat card ─────────────────────────────────────────────────────────────────
 const StatCard = ({ label, value, color }) => (
   <div style={{ background: T.card, borderRadius: 14, border: `1px solid ${T.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "16px 18px", flex: "1 1 140px", minWidth: 130, maxWidth: 300 }}>
@@ -935,6 +948,8 @@ export default function InfluencerTracker() {
 
   // filters
   const [search, setSearch] = useState("");
+  const [dashSearch, setDashSearch] = useState("");
+  const [sourcingSearch, setSourcingSearch] = useState("");
   const [fPlatform, setFPlatform] = useState("All");
   const [fStatus, setFStatus] = useState("All");
   const [fType, setFType] = useState("All");
@@ -1131,12 +1146,26 @@ export default function InfluencerTracker() {
     return days <= Number(fDate);
   };
 
+  // Case-insensitive match across a collaboration's searchable text (creator, products, notes, …)
+  const collabMatches = (creator, collab, q) => {
+    if (!q) return true;
+    const hay = [
+      creator.name, creator.profileLink,
+      collab.type, collab.responsible, collab.notes,
+      ...(collab.products || []).map(p => p.name),
+      ...(collab.attachments || []).map(a => a.filename),
+    ].filter(Boolean).join(" ").toLowerCase();
+    return hay.includes(q);
+  };
+  const dashQ = dashSearch.trim().toLowerCase();
+
   const filteredCollabs = allCollabs.filter(({ creator, collab }) => {
     if (!platformMatch(collabPlatform(creator, collab), fPlatform)) return false;
     if (fStatus !== "All" && collab.status !== fStatus) return false;
     if (fType !== "All" && collab.type !== fType) return false;
     if (fResp !== "All" && collab.responsible !== fResp) return false;
     if (!dateOk(collab.createdAt)) return false;
+    if (!collabMatches(creator, collab, dashQ)) return false;
     return true;
   }).sort((a, b) => {
     const rank = (s) => STATUS_KEYS.indexOf(s);
@@ -1146,10 +1175,22 @@ export default function InfluencerTracker() {
   const filteredCreators = creators.filter(cr => {
     if (fStars !== "All" && (cr.rating || 0) !== Number(fStars)) return false;
     if (search) {
-      const q = search.toLowerCase();
-      if (!(cr.name.toLowerCase().includes(q) || (cr.profileLink || "").toLowerCase().includes(q))) return false;
+      const q = search.trim().toLowerCase();
+      const hay = [
+        cr.name, cr.profileLink, cr.gender, cr.ratingNote,
+        ...(cr.ratingTags || []),
+        ...(cr.collaborations || []).flatMap(co => [co.type, co.responsible, co.notes, ...(co.products || []).map(p => p.name)]),
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
     }
     return true;
+  });
+
+  const sourcingQ = sourcingSearch.trim().toLowerCase();
+  const filteredSourcing = sourcing.filter(s => {
+    if (!sourcingQ) return true;
+    const hay = [s.name, s.profileLink, s.platform, s.comment, s.addedBy].filter(Boolean).join(" ").toLowerCase();
+    return hay.includes(sourcingQ);
   });
 
   const profileCreator = creators.find(c => c.id === profileId) || null;
@@ -1346,6 +1387,14 @@ export default function InfluencerTracker() {
             </div>
 
             {/* Filters */}
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+              <SearchBox value={dashSearch} onChange={setDashSearch} placeholder="Search collaborations…" />
+              {dashQ && (
+                <span style={{ fontSize: 12, color: T.textSec }}>
+                  {filteredCollabs.length} match{filteredCollabs.length !== 1 ? "es" : ""}
+                </span>
+              )}
+            </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 22 }}>
               {["All", ...STATUS_KEYS].map(s => pill(fStatus === s, s === "All" ? "All status" : STATUS[s].label, () => setFStatus(s), s !== "All" ? STATUS[s].color : null))}
               <div style={{ width: 1, height: 20, background: T.border, flexShrink: 0 }} />
@@ -1500,11 +1549,7 @@ export default function InfluencerTracker() {
         {activeTab === "influencers" && (
           <>
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
-              <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 340 }}>
-                <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: T.textTert, pointerEvents: "none" }}>🔍</span>
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search creators…"
-                  style={{ width: "100%", background: T.inputBg, border: "none", borderRadius: 12, padding: "10px 14px 10px 36px", color: T.text, fontSize: 14, outline: "none", fontFamily: "inherit" }} />
-              </div>
+              <SearchBox value={search} onChange={setSearch} placeholder="Search creators, products, notes…" />
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                 {["All", "5", "4", "3", "2", "1"].map(s => {
                   const active = fStars === s;
@@ -1566,11 +1611,17 @@ export default function InfluencerTracker() {
                 style={{ background: T.blue + "18", border: "none", borderRadius: 99, color: T.blue, fontSize: 13, fontWeight: 600, padding: "8px 16px", cursor: "pointer" }}>+ Add Potential Influencer</button>
             </div>
 
-            {sourcing.length === 0 ? (
-              <div style={{ textAlign: "center", color: T.textSec, fontSize: 16, padding: "70px 0" }}>No saved profiles yet.</div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
+              <SearchBox value={sourcingSearch} onChange={setSourcingSearch} placeholder="Search saved profiles…" />
+            </div>
+
+            {filteredSourcing.length === 0 ? (
+              <div style={{ textAlign: "center", color: T.textSec, fontSize: 16, padding: "70px 0" }}>
+                {sourcing.length === 0 ? "No saved profiles yet." : "No profiles match your search."}
+              </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {sourcing.map(s => (
+                {filteredSourcing.map(s => (
                   <div key={s.id} style={{ background: T.card, borderRadius: 14, border: `1px solid ${T.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "14px 16px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 15, fontWeight: 700, color: T.text, letterSpacing: "-0.01em" }}>{s.name}</span>
