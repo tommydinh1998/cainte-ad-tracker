@@ -4,6 +4,7 @@ import AdTracker from "./AdTracker.jsx";
 import InfluencerTracker from "./InfluencerTracker.jsx";
 import CollectionTracker from "./CollectionTracker.jsx";
 import BudgetTracker from "./BudgetTracker.jsx";
+import KpiTracker from "./KpiTracker.jsx";
 import { BRANDS, getBrand, setBrand } from "./brand.js";
 
 const PRODUCTS = [
@@ -11,6 +12,7 @@ const PRODUCTS = [
   { key: "influencer", label: "Influencer Tracker" },
   { key: "collection", label: "Collection Tracker" },
   { key: "budget",     label: "Kampagne Budget" },
+  { key: "kpi",        label: "KPI" },
 ];
 
 export default function App() {
@@ -119,7 +121,9 @@ export default function App() {
           ? <InfluencerTracker key={brand} />
           : product === "collection"
             ? <CollectionTracker key={brand} />
-            : <BudgetTracker key={brand} />}
+            : product === "budget"
+              ? <BudgetTracker key={brand} />
+              : <KpiTracker key={brand} />}
     </div>
   );
 }

@@ -2,6 +2,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -281,6 +282,8 @@ async function initDB() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  await initKpi();
   console.log('DB ready');
 }
 
@@ -1077,6 +1080,638 @@ app.delete('/api/kb/files/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── KPI-rapportering ──────────────────────────────────────────────────────────
+// Lag A = maskintal (leveres af rapport-pipelinen eller tastes af Tommy).
+// Lag B = ét tal pr. ansvarlig, indsendt på et personligt link inden fredag 12.
+// Piloten tester rytmen, ikke resultaterne — derfor logger vi også hvilke tal
+// der blev åbnet på mandagsmødet og hvilke beslutninger de førte til.
+
+const KPI_TZ = 'Europe/Copenhagen';
+
+// Wall-clock i København, uafhængigt af serverens egen tidszone.
+const cphParts = (d = new Date()) => {
+  const f = new Intl.DateTimeFormat('en-GB', {
+    timeZone: KPI_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', weekday: 'short', hourCycle: 'h23',
+  });
+  const p = Object.fromEntries(f.formatToParts(d).map(x => [x.type, x.value]));
+  return { year: +p.year, month: +p.month, day: +p.day, hour: +p.hour, minute: +p.minute, weekday: p.weekday };
+};
+
+// Zonens offset (ms) på et givet tidspunkt — bruges til at gå fra vægur til instant.
+const cphOffsetMs = (date) => {
+  const p = cphParts(date);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(date.getTime() / 60000) * 60000;
+};
+
+// Det UTC-instant hvor klokken i København er (y-m-d hh:mm). To runder fanger
+// sommertidsskiftene, hvor det første gæt kan lande i den forkerte offset.
+const cphInstant = (y, m, d, hh, mm) => {
+  let ts = Date.UTC(y, m - 1, d, hh, mm);
+  for (let i = 0; i < 2; i++) ts = Date.UTC(y, m - 1, d, hh, mm) - cphOffsetMs(new Date(ts));
+  return new Date(ts);
+};
+
+const isoWeekKeyOf = (y, m, d) => {
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const day = dt.getUTCDay() || 7;
+  dt.setUTCDate(dt.getUTCDate() + 4 - day);
+  const yearStart = Date.UTC(dt.getUTCFullYear(), 0, 1);
+  const week = Math.ceil(((dt.getTime() - yearStart) / 86400000 + 1) / 7);
+  return `${dt.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+};
+
+// Mandagen i en ISO-uge. Jan 4 ligger altid i uge 1.
+const isoWeekMonday = (key) => {
+  const [ys, ws] = String(key).split('-W');
+  const jan4 = new Date(Date.UTC(+ys, 0, 4));
+  const day = jan4.getUTCDay() || 7;
+  const week1 = Date.UTC(+ys, 0, 4 - day + 1);
+  return new Date(week1 + (+ws - 1) * 7 * 86400000);
+};
+
+const kpiPeriodType = (p) =>
+  /^\d{4}-W\d{2}$/.test(p) ? 'weekly' : /^\d{4}-Q\d$/.test(p) ? 'quarterly' : /^\d{4}-\d{2}$/.test(p) ? 'monthly' : null;
+
+const kpiCurrentPeriod = (cadence = 'weekly') => {
+  const p = cphParts();
+  if (cadence === 'monthly') return `${p.year}-${String(p.month).padStart(2, '0')}`;
+  if (cadence === 'quarterly') return `${p.year}-Q${Math.ceil(p.month / 3)}`;
+  return isoWeekKeyOf(p.year, p.month, p.day);
+};
+
+const kpiShiftPeriod = (period, delta) => {
+  const type = kpiPeriodType(period);
+  if (type === 'weekly') {
+    const d = new Date(isoWeekMonday(period).getTime() + delta * 7 * 86400000);
+    return isoWeekKeyOf(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+  }
+  if (type === 'monthly') {
+    const [y, m] = period.split('-').map(Number);
+    const t = (y * 12 + (m - 1)) + delta;
+    return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, '0')}`;
+  }
+  if (type === 'quarterly') {
+    const [y, q] = period.split('-Q').map(Number);
+    const t = (y * 4 + (q - 1)) + delta;
+    return `${Math.floor(t / 4)}-Q${(t % 4) + 1}`;
+  }
+  return period;
+};
+
+// Ugens deadline: fredag kl. 12 i København. Måneden lukkes den 7. i den næste.
+const kpiDeadline = (period) => {
+  const type = kpiPeriodType(period);
+  if (type === 'weekly') {
+    const fri = new Date(isoWeekMonday(period).getTime() + 4 * 86400000);
+    return cphInstant(fri.getUTCFullYear(), fri.getUTCMonth() + 1, fri.getUTCDate(), 12, 0);
+  }
+  if (type === 'monthly') {
+    const next = kpiShiftPeriod(period, 1).split('-').map(Number);
+    return cphInstant(next[0], next[1], 7, 12, 0);
+  }
+  return null;
+};
+
+const kpiPeriodLabel = (period) => {
+  const type = kpiPeriodType(period);
+  if (type !== 'weekly') return period;
+  const mon = isoWeekMonday(period);
+  const sun = new Date(mon.getTime() + 6 * 86400000);
+  const f = (d) => `${d.getUTCDate()}/${d.getUTCMonth() + 1}`;
+  return `Uge ${period.split('-W')[1]} · ${f(mon)}–${f(sun)}`;
+};
+
+// ── Registret: de tal onepagerne definerer ────────────────────────────────────
+// Tal der består af to størrelser (creative hit rate + spend, EBITDA + margin,
+// stock-out + tabt omsætning) står som to rækker. Ét felt = ét tal.
+const KPI_SEED_OWNERS = [
+  { name: "Content / social", func: "Content / social", sort: 1, active: true },
+  { name: "Creative",         func: "Creative",         sort: 2, active: true },
+  { name: "Influencer",       func: "Influencer",       sort: 3, active: true },
+  { name: "Kundeservice",     func: "Kundeservice",     sort: 4, active: true },
+  { name: "Lager / indkøb",   func: "Lager / indkøb",   sort: 5, active: true },
+  { name: "B2B",              func: "B2B",              sort: 6, active: false },
+];
+
+const KPI_SEED_METRICS = [
+  // Lag A — ugentligt, trækkes af systemerne
+  { key: "net_sales_growth",       label: "Net sales — vækst vs. sidste år", unit: "%",     func: "Salg",           source: "Shopify",                    layer: "A", cadence: "weekly", sort: 1,  definition: "Vækst i % mod samme uge sidste år, pr. marked." },
+  { key: "mer_all_channel",        label: "MER, all-channel",                unit: "x",     func: "Marketing",      source: "Windsor + Shopify",          layer: "A", cadence: "weekly", sort: 2,  definition: "Shopify-omsætning ÷ alt annonceforbrug. ≥2,0 skalér · 1,7–2,0 hold · <1,7 skær." },
+  { key: "new_customer_share",     label: "Nye kunders andel af omsætning",  unit: "%",     func: "Marketing",      source: "Shopify",                    layer: "A", cadence: "weekly", sort: 3,  definition: "Står altid ved siden af MER — MER kan rammes ved at skære volumen." },
+  { key: "full_price_share",       label: "Full-price-andel",                unit: "%",     func: "Marketing",      source: "Shopify",                    layer: "A", cadence: "weekly", sort: 4,  definition: "Andel af omsætning solgt uden rabatkode." },
+  { key: "cvr_mobile",             label: "Konverteringsrate — mobil",       unit: "%",     func: "Marketing",      source: "Shopify",                    layer: "A", cadence: "weekly", sort: 5,  definition: "Mobil opgøres separat fra desktop." },
+  { key: "aov",                    label: "AOV",                             unit: "EUR",   func: "Marketing",      source: "Shopify",                    layer: "A", cadence: "weekly", sort: 6,  definition: "Gennemsnitlig ordreværdi." },
+  { key: "creative_hit_rate",      label: "Creative hit rate",               unit: "%",     func: "Creative",       source: "Ad tracker",                 layer: "A", cadence: "weekly", sort: 7,  definition: "Andel af nye ads der slår kontrollen." },
+  { key: "spend_share_new_ads",    label: "Spend på ads under 30 dage",      unit: "%",     func: "Creative",       source: "Ad tracker",                 dir: "neutral", layer: "A", cadence: "weekly", sort: 8,  definition: "Andel af forbrug på ads yngre end 30 dage — måler annoncetræthed." },
+  { key: "flow_revenue",           label: "Flowomsætning",                   unit: "EUR",   func: "Marketing",      source: "Klaviyo",                    layer: "A", cadence: "weekly", sort: 9,  definition: "Omsætning fra automatiserede flows." },
+  { key: "contacts_per_100",       label: "Kontakter pr. 100 ordrer",        unit: "antal", func: "Kundeservice",   source: "Gorgias + Shopify",          dir: "down", layer: "A", cadence: "weekly", sort: 10, definition: "Henvendelser divideret med ordrer × 100." },
+  { key: "stockout_rate",          label: "Stock-out-rate, top-20 SKU'er",   unit: "%",     func: "Lager / indkøb", source: "Shopify + Inventory Planner", dir: "down", layer: "A", cadence: "weekly", sort: 11, definition: "Andel af top-20 SKU'er der var udsolgt i ugen." },
+  { key: "stockout_lost_revenue",  label: "Tabt omsætning ved stock-out",    unit: "EUR",   func: "Lager / indkøb", source: "Shopify + Inventory Planner", dir: "down", layer: "A", cadence: "weekly", sort: 12, definition: "Estimat. Det eneste sted tabt salg bliver synligt." },
+
+  // Lag B — ugentligt, ét tal pr. ansvarlig, fredag inden 12
+  { key: "posts_published", label: "Posts publiceret",         unit: "antal", func: "Content / social", owner: "Content / social", layer: "B", cadence: "weekly", sort: 21, definition: "Feed + reels. Stories tæller ikke med." },
+  { key: "new_ads_live",    label: "Nye ads sat live",         unit: "antal", func: "Creative",         owner: "Creative",         layer: "B", cadence: "weekly", sort: 22, definition: "Ads der er gået live i ugen — ikke ads der er briefet." },
+  { key: "giftings_sent",   label: "Giftings sendt",           unit: "antal", func: "Influencer",       owner: "Influencer",       layer: "B", cadence: "weekly", sort: 23, definition: "Antal pakker afsendt til influencere i ugen." },
+  { key: "ugc_received",    label: "Tags / UGC modtaget",      unit: "antal", func: "Influencer",       owner: "Influencer",       layer: "B", cadence: "weekly", sort: 24, definition: "Stykker indhold vi har modtaget eller er tagget i." },
+  { key: "defect_tickets",  label: "Defekt-tickets",           unit: "antal", func: "Kundeservice",     owner: "Kundeservice",     dir: "down", layer: "B", cadence: "weekly", sort: 25, definition: "Tickets om defekt vare. Vores tidligste varsel om et leverandørproblem." },
+  { key: "pos_delayed",     label: "PO'er forsinket vs. plan", unit: "antal", func: "Lager / indkøb",   owner: "Lager / indkøb",   dir: "down", layer: "B", cadence: "weekly", sort: 26, definition: "Antal indkøbsordrer der er bagud i forhold til plan." },
+  { key: "b2b_dialogs",     label: "Aktive forhandlerdialoger", unit: "antal", func: "B2B",             owner: "B2B",              layer: "B", cadence: "weekly", sort: 27, active: false, definition: "Åbne dialoger med forhandlere. Kun når B2B er aktivt." },
+
+  // Månedligt — for langsomme til en uge
+  { key: "ebitda_eur",        label: "Profit — EBITDA",          unit: "EUR", func: "Finance",      source: "P&L",       layer: "A", cadence: "monthly", sort: 41, definition: "Begge dele opgøres: beløb og margin. Kun margin kan rammes ved at krympe." },
+  { key: "ebitda_margin",     label: "EBITDA-margin",            unit: "%",   func: "Finance",      source: "P&L",       layer: "A", cadence: "monthly", sort: 42, definition: "EBITDA i % af omsætning." },
+  { key: "revenue_vs_budget", label: "Omsætning mod budget",     unit: "%",   func: "Finance",      source: "P&L",       layer: "A", cadence: "monthly", sort: 43, definition: "Afvigelse i % mod budget." },
+  { key: "return_rate",       label: "Returrate",                unit: "%",   func: "Kundeservice", source: "Shopify",   dir: "down", layer: "A", cadence: "monthly", sort: 44, definition: "Lander 2–4 uger forsinket. Derfor ikke på ugerapporten — en stærk salgsuge ser automatisk pæn ud." },
+  { key: "csat",              label: "Kundetilfredshed (CSAT)",  unit: "",    func: "Kundeservice", source: "Gorgias",   layer: "B", cadence: "monthly", owner: "Kundeservice", sort: 45, definition: "Pr. henvendelsesårsag." },
+  { key: "trustpilot_score",  label: "Trustpilot-score",         unit: "",    func: "Kundeservice", source: "Trustpilot", layer: "B", cadence: "monthly", owner: "Kundeservice", sort: 46, definition: "Samlet score." },
+  { key: "trustpilot_count",  label: "Trustpilot-anmeldelser",   unit: "antal", func: "Kundeservice", source: "Trustpilot", layer: "B", cadence: "monthly", owner: "Kundeservice", sort: 47, definition: "Antal anmeldelser i måneden." },
+  { key: "culture_score",     label: "CAINTÉ Culture Score",     unit: "",    func: "HR",           source: "Survey",    layer: "B", cadence: "monthly", sort: 48, definition: "Fem spørgsmål · skala 1–5 · anonym · kun samlet gennemsnit." },
+
+  // Kvartalsvis — brandtal. Ligger i registret, aktiveres når piloten er bestået.
+  { key: "unpaid_traffic_share", label: "Ubetalt trafik i % af omsætning", unit: "%",   func: "Brand", source: "Shopify + GA", layer: "A", cadence: "quarterly", active: false, sort: 61, definition: "Direkte + organisk + brandsøgning. Kommer kunderne af sig selv?" },
+  { key: "branded_search_index", label: "Branded søgevolumen (indeks)",    unit: "",    func: "Brand", source: "GSC",          layer: "A", cadence: "quarterly", active: false, sort: 62, definition: "Indekseret mod baseline." },
+  { key: "campaign_days",        label: "Kampagnedage pr. år",             unit: "antal", func: "Brand", source: "Manuel",     dir: "neutral", layer: "B", cadence: "quarterly", active: false, sort: 63, definition: "Brand ejer loftet; performance styrer forbruget inden for det." },
+  { key: "discount_depth",       label: "Rabatdybde",                      unit: "%",   func: "Brand", source: "Shopify",      dir: "down", layer: "A", cadence: "quarterly", active: false, sort: 64, definition: "Gennemsnitlig rabat på kampagnedage." },
+  { key: "repeat_purchase",      label: "Gentagelseskøb",                  unit: "%",   func: "Brand", source: "Shopify",      layer: "A", cadence: "quarterly", active: false, sort: 65, definition: "Andel kunder der køber igen." },
+  { key: "aov_returning",        label: "AOV — returnerende kunder",       unit: "EUR", func: "Brand", source: "Shopify",      layer: "A", cadence: "quarterly", active: false, sort: 66, definition: "Ordreværdi for kunder der har købt før." },
+];
+
+const kpiToken = () => crypto.randomBytes(9).toString('base64url');
+
+async function initKpi() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS kpi_owners (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      name TEXT NOT NULL,
+      func TEXT DEFAULT '',
+      slack_handle TEXT DEFAULT '',
+      token TEXT UNIQUE NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      sort_order INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS kpi_metrics (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      metric_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      unit TEXT DEFAULT '',
+      definition TEXT DEFAULT '',
+      layer TEXT NOT NULL DEFAULT 'A',
+      cadence TEXT NOT NULL DEFAULT 'weekly',
+      direction TEXT,
+      func TEXT DEFAULT '',
+      source TEXT DEFAULT '',
+      owner_id INTEGER REFERENCES kpi_owners(id) ON DELETE SET NULL,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      sort_order INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS kpi_metrics_brand_key ON kpi_metrics (brand, metric_key);
+    ALTER TABLE kpi_metrics ADD COLUMN IF NOT EXISTS direction TEXT;
+    CREATE TABLE IF NOT EXISTS kpi_entries (
+      id SERIAL PRIMARY KEY,
+      metric_id INTEGER NOT NULL REFERENCES kpi_metrics(id) ON DELETE CASCADE,
+      period TEXT NOT NULL,
+      value NUMERIC,
+      note TEXT DEFAULT '',
+      submitted_by TEXT DEFAULT '',
+      submitted_at TIMESTAMPTZ DEFAULT NOW(),
+      on_time BOOLEAN NOT NULL DEFAULT TRUE,
+      source TEXT DEFAULT 'manual'
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS kpi_entries_metric_period ON kpi_entries (metric_id, period);
+    CREATE TABLE IF NOT EXISTS kpi_decisions (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      metric_id INTEGER REFERENCES kpi_metrics(id) ON DELETE SET NULL,
+      period TEXT NOT NULL,
+      body TEXT NOT NULL,
+      author TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS kpi_views (
+      id SERIAL PRIMARY KEY,
+      metric_id INTEGER NOT NULL REFERENCES kpi_metrics(id) ON DELETE CASCADE,
+      period TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS kpi_reminders (
+      id SERIAL PRIMARY KEY,
+      period TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      sent_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS kpi_reminders_period_kind ON kpi_reminders (period, kind);
+  `);
+
+  // Seed én gang pr. brand. ON CONFLICT DO NOTHING gør boot idempotent, så
+  // rettelser i registret laves i appen — ikke ved at ændre listen ovenfor.
+  for (const brand of BRANDS) {
+    for (const o of KPI_SEED_OWNERS) {
+      await pool.query(
+        `INSERT INTO kpi_owners (brand, name, func, token, active, sort_order)
+         SELECT $1,$2,$3,$4,$5,$6
+         WHERE NOT EXISTS (SELECT 1 FROM kpi_owners WHERE brand=$1 AND name=$2)`,
+        [brand, o.name, o.func, kpiToken(), o.active !== false, o.sort]
+      );
+    }
+    const owners = await pool.query('SELECT id, name FROM kpi_owners WHERE brand=$1', [brand]);
+    const ownerId = (name) => (owners.rows.find(r => r.name === name) || {}).id || null;
+    for (const m of KPI_SEED_METRICS) {
+      await pool.query(
+        `INSERT INTO kpi_metrics (brand, metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         ON CONFLICT (brand, metric_key) DO NOTHING`,
+        [brand, m.key, m.label, m.unit || '', m.definition || '', m.layer, m.cadence, m.dir || 'up',
+         m.func || '', m.source || '', m.owner ? ownerId(m.owner) : null, m.active !== false, m.sort || 0]
+      );
+      // Kolonnen kom til efter første deploy — fyld den uden at overskrive
+      // en retning nogen har rettet i appen.
+      await pool.query(
+        'UPDATE kpi_metrics SET direction=$3 WHERE brand=$1 AND metric_key=$2 AND direction IS NULL',
+        [brand, m.key, m.dir || 'up']
+      );
+    }
+  }
+}
+
+const mapKpiMetric = (r) => ({ ...r, value: undefined, sort_order: r.sort_order });
+const kpiNum = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+
+// Hele billedet for én periode. Frontenden udleder resten.
+app.get('/api/kpi/data', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const period = req.query.period || kpiCurrentPeriod('weekly');
+    const type = kpiPeriodType(period);
+    if (!type) return res.status(400).json({ error: 'ugyldig periode' });
+
+    const history = [];
+    for (let i = 7; i >= 0; i--) history.push(kpiShiftPeriod(period, -i));
+
+    const [metrics, owners, entries, decisions, views] = await Promise.all([
+      pool.query('SELECT * FROM kpi_metrics WHERE brand=$1 ORDER BY sort_order, id', [brand]),
+      pool.query('SELECT * FROM kpi_owners WHERE brand=$1 ORDER BY sort_order, id', [brand]),
+      pool.query(
+        `SELECT e.* FROM kpi_entries e JOIN kpi_metrics m ON m.id=e.metric_id
+         WHERE m.brand=$1 AND e.period = ANY($2)`, [brand, history]),
+      pool.query('SELECT * FROM kpi_decisions WHERE brand=$1 ORDER BY created_at DESC LIMIT 200', [brand]),
+      pool.query(
+        `SELECT v.metric_id, COUNT(*)::int AS views FROM kpi_views v JOIN kpi_metrics m ON m.id=v.metric_id
+         WHERE m.brand=$1 GROUP BY v.metric_id`, [brand]),
+    ]);
+
+    const deadline = kpiDeadline(period);
+    res.json({
+      period,
+      periodType: type,
+      periodLabel: kpiPeriodLabel(period),
+      history,
+      deadline: deadline ? deadline.toISOString() : null,
+      past: deadline ? Date.now() > deadline.getTime() : false,
+      metrics: metrics.rows,
+      owners: owners.rows,
+      entries: entries.rows,
+      decisions: decisions.rows,
+      views: views.rows,
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+// Upsert af ét tal. on_time falder aldrig tilbage til true: er ugen først
+// leveret for sent, tæller en senere rettelse stadig som for sent.
+async function kpiSaveEntry({ metricId, period, value, note, by, source }) {
+  const deadline = kpiDeadline(period);
+  const onTime = !deadline || Date.now() <= deadline.getTime();
+  const r = await pool.query(
+    `INSERT INTO kpi_entries (metric_id, period, value, note, submitted_by, submitted_at, on_time, source)
+     VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7)
+     ON CONFLICT (metric_id, period) DO UPDATE SET
+       value=EXCLUDED.value, note=EXCLUDED.note, submitted_by=EXCLUDED.submitted_by,
+       submitted_at=NOW(), on_time = kpi_entries.on_time AND EXCLUDED.on_time,
+       source=EXCLUDED.source
+     RETURNING *`,
+    [metricId, period, kpiNum(value), note || '', by || '', onTime, source || 'manual']
+  );
+  return r.rows[0];
+}
+
+app.put('/api/kpi/entries', async (req, res) => {
+  const { metric_id, period, value, note, submitted_by } = req.body;
+  if (!metric_id || !period) return res.status(400).json({ error: 'metric_id og period er påkrævet' });
+  try {
+    if (value === null || value === '') {
+      await pool.query('DELETE FROM kpi_entries WHERE metric_id=$1 AND period=$2', [metric_id, period]);
+      return res.json({ success: true, cleared: true });
+    }
+    res.json(await kpiSaveEntry({ metricId: metric_id, period, value, note, by: submitted_by, source: 'manual' }));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+// ── Lag A ind fra rapport-pipelinen ───────────────────────────────────────────
+// POST { period, values: { metric_key: tal } }. Kræver x-api-key når
+// KPI_INGEST_KEY er sat i miljøet.
+app.post('/api/kpi/ingest', async (req, res) => {
+  const key = process.env.KPI_INGEST_KEY;
+  if (key && req.get('x-api-key') !== key) return res.status(401).json({ error: 'ugyldig nøgle' });
+  const { period, values } = req.body || {};
+  if (!period || !values || typeof values !== 'object') return res.status(400).json({ error: 'period og values er påkrævet' });
+  try {
+    const brand = brandOf(req);
+    const rows = await pool.query('SELECT id, metric_key FROM kpi_metrics WHERE brand=$1', [brand]);
+    const byKey = Object.fromEntries(rows.rows.map(r => [r.metric_key, r.id]));
+    const written = [], unknown = [];
+    for (const [k, v] of Object.entries(values)) {
+      if (!byKey[k]) { unknown.push(k); continue; }
+      await kpiSaveEntry({ metricId: byKey[k], period, value: v, by: 'pipeline', source: 'ingest' });
+      written.push(k);
+    }
+    res.json({ period, written, unknown });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+// Rent udtræk til rapportgeneratoren — manglende tal står som null, aldrig 0.
+app.get('/api/kpi/report/:period', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const period = req.params.period;
+    if (!kpiPeriodType(period)) return res.status(400).json({ error: 'ugyldig periode' });
+    const cadence = kpiPeriodType(period);
+    const r = await pool.query(
+      `SELECT m.metric_key, m.label, m.unit, m.layer, m.func, m.source, m.definition,
+              e.value, e.submitted_at, e.on_time
+         FROM kpi_metrics m
+         LEFT JOIN kpi_entries e ON e.metric_id=m.id AND e.period=$2
+        WHERE m.brand=$1 AND m.active AND m.cadence=$3
+        ORDER BY m.sort_order, m.id`, [brand, period, cadence]);
+    res.json({
+      period, label: kpiPeriodLabel(period),
+      metrics: r.rows.map(x => ({
+        key: x.metric_key, label: x.label, unit: x.unit, layer: x.layer,
+        func: x.func, source: x.source, definition: x.definition,
+        value: x.value === null ? null : Number(x.value),
+        status: x.value === null ? 'missing' : (x.on_time ? 'ok' : 'late'),
+        submittedAt: x.submitted_at,
+      })),
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+// ── Det personlige link ───────────────────────────────────────────────────────
+// /r/<token> — ingen adgangskode, ingen navigation. Kun denne persons felter for
+// denne periode. Token er adgangen; roteres fra Ansvarlige-fanen.
+app.get('/api/kpi/me/:token', async (req, res) => {
+  try {
+    const oRes = await pool.query('SELECT * FROM kpi_owners WHERE token=$1', [req.params.token]);
+    const owner = oRes.rows[0];
+    if (!owner) return res.status(404).json({ error: 'ukendt link' });
+
+    const cadence = req.query.cadence === 'monthly' ? 'monthly' : 'weekly';
+    const period = req.query.period || kpiCurrentPeriod(cadence);
+    const prev = kpiShiftPeriod(period, -1);
+    const mRes = await pool.query(
+      `SELECT * FROM kpi_metrics WHERE brand=$1 AND owner_id=$2 AND active AND cadence=$3 ORDER BY sort_order, id`,
+      [owner.brand, owner.id, cadence]);
+    const ids = mRes.rows.map(m => m.id);
+    const eRes = ids.length
+      ? await pool.query('SELECT * FROM kpi_entries WHERE metric_id = ANY($1) AND period = ANY($2)', [ids, [period, prev]])
+      : { rows: [] };
+    const at = (mid, p) => eRes.rows.find(e => e.metric_id === mid && e.period === p);
+    const deadline = kpiDeadline(period);
+
+    res.json({
+      owner: { id: owner.id, name: owner.name, func: owner.func },
+      period, periodLabel: kpiPeriodLabel(period),
+      deadline: deadline ? deadline.toISOString() : null,
+      past: deadline ? Date.now() > deadline.getTime() : false,
+      fields: mRes.rows.map(m => ({
+        id: m.id, label: m.label, unit: m.unit, definition: m.definition,
+        value: at(m.id, period) ? Number(at(m.id, period).value) : null,
+        last: at(m.id, prev) ? Number(at(m.id, prev).value) : null,
+      })),
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kpi/me/:token', async (req, res) => {
+  const { period, values, note } = req.body || {};
+  if (!period || !values) return res.status(400).json({ error: 'period og values er påkrævet' });
+  try {
+    const oRes = await pool.query('SELECT * FROM kpi_owners WHERE token=$1', [req.params.token]);
+    const owner = oRes.rows[0];
+    if (!owner) return res.status(404).json({ error: 'ukendt link' });
+    const mine = await pool.query('SELECT id FROM kpi_metrics WHERE owner_id=$1', [owner.id]);
+    const allowed = new Set(mine.rows.map(r => r.id));
+    for (const [id, v] of Object.entries(values)) {
+      if (!allowed.has(Number(id))) continue;
+      if (v === '' || v === null) continue;
+      await kpiSaveEntry({ metricId: Number(id), period, value: v, note: note || '', by: owner.name, source: 'manual' });
+    }
+    const deadline = kpiDeadline(period);
+    res.json({ success: true, onTime: !deadline || Date.now() <= deadline.getTime() });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+// ── Ansvarlige ────────────────────────────────────────────────────────────────
+app.post('/api/kpi/owners', async (req, res) => {
+  const { name, func, slack_handle, active, sort_order } = req.body;
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'navn er påkrævet' });
+  try {
+    const r = await pool.query(
+      `INSERT INTO kpi_owners (brand, name, func, slack_handle, token, active, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [brandOf(req), String(name).trim(), func || '', slack_handle || '', kpiToken(), active !== false, sort_order || 99]);
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/kpi/owners/:id', async (req, res) => {
+  const { name, func, slack_handle, active, sort_order } = req.body;
+  try {
+    const r = await pool.query(
+      `UPDATE kpi_owners SET name=$1, func=$2, slack_handle=$3, active=$4, sort_order=$5 WHERE id=$6 RETURNING *`,
+      [name, func || '', slack_handle || '', active !== false, sort_order || 0, req.params.id]);
+    res.json(r.rows[0] || { success: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kpi/owners/:id/rotate', async (req, res) => {
+  try {
+    const r = await pool.query('UPDATE kpi_owners SET token=$1 WHERE id=$2 RETURNING *', [kpiToken(), req.params.id]);
+    res.json(r.rows[0] || { success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/kpi/owners/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM kpi_owners WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Registret ─────────────────────────────────────────────────────────────────
+app.post('/api/kpi/metrics', async (req, res) => {
+  const { metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order } = req.body;
+  if (!label || !String(label).trim()) return res.status(400).json({ error: 'label er påkrævet' });
+  try {
+    const key = (metric_key || String(label).toLowerCase().replace(/[^a-z0-9]+/g, '_')).slice(0, 60);
+    const r = await pool.query(
+      `INSERT INTO kpi_metrics (brand, metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [brandOf(req), key, String(label).trim(), unit || '', definition || '', layer || 'B', cadence || 'weekly',
+       direction || 'up', func || '', source || '', owner_id || null, active !== false, sort_order || 99]);
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/kpi/metrics/:id', async (req, res) => {
+  const { label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order } = req.body;
+  try {
+    const r = await pool.query(
+      `UPDATE kpi_metrics SET label=$1, unit=$2, definition=$3, layer=$4, cadence=$5, direction=$6, func=$7, source=$8,
+              owner_id=$9, active=$10, sort_order=$11 WHERE id=$12 RETURNING *`,
+      [label, unit || '', definition || '', layer || 'B', cadence || 'weekly', direction || 'up', func || '', source || '',
+       owner_id || null, active !== false, sort_order || 0, req.params.id]);
+    res.json(r.rows[0] || { success: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/kpi/metrics/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM kpi_metrics WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Pilot-instrumentering ─────────────────────────────────────────────────────
+// Beslutningsporten spørger om tre ting efter måned 1. Uden de her tre logs er
+// evalueringen en hukommelsesøvelse, og så består systemet altid sin egen eksamen.
+app.post('/api/kpi/decisions', async (req, res) => {
+  const { metric_id, period, body, author } = req.body;
+  if (!body || !String(body).trim()) return res.status(400).json({ error: 'beslutningen skal beskrives' });
+  try {
+    const r = await pool.query(
+      `INSERT INTO kpi_decisions (brand, metric_id, period, body, author) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [brandOf(req), metric_id || null, period || kpiCurrentPeriod('weekly'), String(body).trim(), author || '']);
+    res.json(r.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/kpi/decisions/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM kpi_decisions WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/kpi/views', async (req, res) => {
+  const { metric_id, period } = req.body;
+  if (!metric_id) return res.status(400).json({ error: 'metric_id er påkrævet' });
+  try {
+    await pool.query('INSERT INTO kpi_views (metric_id, period) VALUES ($1,$2)', [metric_id, period || '']);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Evalueringsmødets side: de tre porte som tal, ikke som holdninger.
+app.get('/api/kpi/pilot', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const weeks = Math.min(Math.max(parseInt(req.query.weeks, 10) || 4, 1), 26);
+    const end = req.query.period || kpiCurrentPeriod('weekly');
+    const periods = [];
+    for (let i = weeks - 1; i >= 0; i--) periods.push(kpiShiftPeriod(end, -i));
+
+    const [mRes, eRes, dRes, vRes] = await Promise.all([
+      pool.query('SELECT * FROM kpi_metrics WHERE brand=$1 AND active AND cadence=$2 ORDER BY sort_order', [brand, 'weekly']),
+      pool.query(
+        `SELECT e.* FROM kpi_entries e JOIN kpi_metrics m ON m.id=e.metric_id
+          WHERE m.brand=$1 AND e.period = ANY($2)`, [brand, periods]),
+      pool.query('SELECT * FROM kpi_decisions WHERE brand=$1 AND period = ANY($2) ORDER BY created_at DESC', [brand, periods]),
+      pool.query(
+        `SELECT v.metric_id, COUNT(*)::int AS views FROM kpi_views v JOIN kpi_metrics m ON m.id=v.metric_id
+          WHERE m.brand=$1 AND v.period = ANY($2) GROUP BY v.metric_id`, [brand, periods]),
+    ]);
+
+    const layerB = mRes.rows.filter(m => m.layer === 'B');
+    const viewsBy = Object.fromEntries(vRes.rows.map(r => [r.metric_id, r.views]));
+
+    // Port 2: en uge tæller kun som "holdt" hvis alle lag B-tal kom ind til tiden.
+    const discipline = periods.map(p => {
+      const rows = layerB.map(m => eRes.rows.find(e => e.metric_id === m.id && e.period === p));
+      const submitted = rows.filter(Boolean).length;
+      return {
+        period: p, label: kpiPeriodLabel(p),
+        expected: layerB.length, submitted,
+        onTime: rows.filter(r => r && r.on_time).length,
+        clean: layerB.length > 0 && rows.every(r => r && r.on_time),
+      };
+    });
+
+    res.json({
+      periods,
+      decisions: dRes.rows,
+      decisionCount: dRes.rows.length,
+      discipline,
+      cleanWeeks: discipline.filter(d => d.clean).length,
+      unopened: mRes.rows.filter(m => !viewsBy[m.id]).map(m => ({ id: m.id, label: m.label, layer: m.layer, func: m.func })),
+      gates: {
+        used:       { pass: dRes.rows.length >= 3, value: dRes.rows.length, need: 3 },
+        discipline: { pass: discipline.filter(d => d.clean).length >= 3, value: discipline.filter(d => d.clean).length, need: 3 },
+      },
+    });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+// ── Påmindelser ───────────────────────────────────────────────────────────────
+// Fredag 09:00: link ud til hver ansvarlig. Mandag 07:00: rapporten er klar.
+// Der sendes bevidst ingen rykkere — beslutningsport 2 spørger om tallene kom
+// ind *uden* rykkere, og en automatisk rykker ville gøre det umuligt at måle.
+// Kører in-process hvert 5. minut; kpi_reminders dedupliker på tværs af deploys.
+async function kpiSlack(text) {
+  const url = process.env.SLACK_WEBHOOK_URL;
+  if (!url || typeof fetch !== 'function') return false;
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    return r.ok;
+  } catch (e) { console.error('Slack:', e.message); return false; }
+}
+
+async function kpiTick() {
+  try {
+    const p = cphParts();
+    const base = process.env.PUBLIC_URL || 'https://ops.cainte.com';
+    const week = isoWeekKeyOf(p.year, p.month, p.day);
+
+    if (p.weekday === 'Fri' && p.hour === 9 && p.minute < 10) {
+      const claim = await pool.query(
+        `INSERT INTO kpi_reminders (period, kind) VALUES ($1,'friday')
+         ON CONFLICT (period, kind) DO NOTHING RETURNING id`, [week]);
+      if (claim.rows[0]) {
+        const owners = await pool.query(
+          `SELECT DISTINCT o.* FROM kpi_owners o JOIN kpi_metrics m ON m.owner_id=o.id
+            WHERE o.active AND m.active AND m.cadence='weekly' ORDER BY o.sort_order`);
+        const lines = owners.rows.map(o => `• ${o.slack_handle || o.name} — ${base}/r/${o.token}`);
+        await kpiSlack([`*${kpiPeriodLabel(week)} — dit tal inden kl. 12*`, '', ...lines, '',
+          'Ét felt, under et minut. Tal der ikke kommer ind står som _manglende_ på mandag — ikke som nul.'].join('\n'));
+      }
+    }
+
+    if (p.weekday === 'Mon' && p.hour === 7 && p.minute < 10) {
+      const last = kpiShiftPeriod(week, -1);
+      const claim = await pool.query(
+        `INSERT INTO kpi_reminders (period, kind) VALUES ($1,'monday')
+         ON CONFLICT (period, kind) DO NOTHING RETURNING id`, [last]);
+      if (claim.rows[0]) {
+        await kpiSlack(`*${kpiPeriodLabel(last)} er klar* — ${base}\n30 minutter, kun afvigelser.`);
+      }
+    }
+  } catch (e) { console.error('kpiTick:', e.message); }
+}
+
 app.use(express.static(path.join(__dirname, '../dist')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'));
@@ -1085,4 +1720,7 @@ app.get('*', (req, res) => {
 const PORT = process.env.PORT || 3000;
 initDB().then(() => {
   app.listen(PORT, '0.0.0.0', () => console.log(`Server on port ${PORT}`));
+  // Fredags- og mandagspåmindelser. Checkes hvert 5. minut.
+  kpiTick();
+  setInterval(kpiTick, 5 * 60 * 1000);
 }).catch(err => { console.error('DB init failed:', err); process.exit(1); });
