@@ -4,10 +4,12 @@ import { api } from "./brand.js";
 
 const today = new Date();
 
-const PLATFORMS = ["Instagram", "TikTok", "Both", "Other"];        // a creator's main channel
-const COLLAB_PLATFORMS = ["Instagram", "TikTok", "Both"];          // what a single collaboration runs on
+const PLATFORMS = ["Instagram", "TikTok", "YouTube", "Both", "Other"];   // a creator's main channel
+const COLLAB_PLATFORMS = ["Instagram", "TikTok", "YouTube", "Both"];     // what a single collaboration runs on ("Both" = Instagram + TikTok)
+// Platforms a single content piece can be posted on.
+const PIECE_PLATFORMS = ["Instagram", "TikTok", "YouTube"];
 // "Meta" was the old label for Instagram — kept in the colour map so legacy rows still render.
-const PLATFORM_COLOR = { Instagram: "#C13584", Meta: "#C13584", TikTok: "#FF2D55", Both: "#5856D6", Other: "#8E8E93" };
+const PLATFORM_COLOR = { Instagram: "#C13584", Meta: "#C13584", TikTok: "#FF2D55", YouTube: "#FF0000", Both: "#5856D6", Other: "#8E8E93" };
 const normPlatform = (p) => (p === "Meta" ? "Instagram" : (p || ""));
 
 const TYPES = ["Gifting", "Paid", "Affiliate", "Ambassador", "Ongoing", "Other"];
@@ -17,8 +19,10 @@ const GENDERS = ["Woman", "Man"];
 const GENDER_COLOR = { Woman: "#FF2D55", Man: "#007AFF" };
 
 // Agreed deliverables and actually delivered content share one vocabulary.
-const CONTENT_TYPES = ["Reel", "Story", "TikTok Video", "Post", "UGC", "Other"];
-const CONTENT_COLOR = { Reel: "#AF52DE", Story: "#FF9500", "TikTok Video": "#FF2D55", Post: "#007AFF", UGC: "#30B0C7", Other: "#8E8E93" };
+const CONTENT_TYPES = ["Reel", "Story", "TikTok Video", "YouTube Video", "Post", "UGC", "Other"];
+const CONTENT_COLOR = { Reel: "#AF52DE", Story: "#FF9500", "TikTok Video": "#FF2D55", "YouTube Video": "#FF0000", Post: "#007AFF", UGC: "#30B0C7", Other: "#8E8E93" };
+// Sensible default content type for a platform (Instagram/Both → Reel).
+const defaultTypeFor = (platform) => platform === "TikTok" ? "TikTok Video" : platform === "YouTube" ? "YouTube Video" : "Reel";
 const DELIVERABLES = CONTENT_TYPES;
 
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -212,7 +216,7 @@ const ContentField = ({ collab, patch }) => {
   const content = collab.content || [];
   const setContent = (arr) => patch({ content: arr });
   const add = () => setContent([...content, {
-    type: normPlatform(collab.platform) === "TikTok" ? "TikTok Video" : "Reel",
+    type: defaultTypeFor(normPlatform(collab.platform)),
     platform: normPlatform(collab.platform) === "Both" ? "Instagram" : (normPlatform(collab.platform) || "Instagram"),
     qty: 1, postedOn: isoDate(today), link: "",
   }]);
@@ -242,8 +246,7 @@ const ContentField = ({ collab, patch }) => {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "150px 1fr", gap: 7, marginTop: 7 }}>
                 <select value={normPlatform(p.platform)} onChange={e => upd(i, "platform", e.target.value)} style={{ ...smallInput, background: "#fff", cursor: "pointer" }}>
-                  <option value="Instagram">Instagram</option>
-                  <option value="TikTok">TikTok</option>
+                  {PIECE_PLATFORMS.map(pl => <option key={pl} value={pl}>{pl}</option>)}
                 </select>
                 <input value={p.link || ""} onChange={e => upd(i, "link", e.target.value)} placeholder="Link (optional)"
                   style={{ ...smallInput, background: "#fff" }} {...focusBlue} />
@@ -442,7 +445,7 @@ const CollaborationModal = ({ creator, editCollab, onClose, onSave }) => {
 const QuickContentModal = ({ creator, collab, onClose, onSave }) => {
   const platform = collabPlatform(creator, collab);
   const [piece, setPiece] = useState({
-    type: platform === "TikTok" ? "TikTok Video" : "Reel",
+    type: defaultTypeFor(platform),
     platform: platform === "Both" ? "Instagram" : (platform || "Instagram"),
     qty: 1, postedOn: isoDate(today), link: "",
   });
@@ -464,7 +467,7 @@ const QuickContentModal = ({ creator, collab, onClose, onSave }) => {
 
         <div style={{ marginBottom: 18 }}>
           <FormLabel>Platform</FormLabel>
-          <Segmented options={["Instagram", "TikTok"]} value={piece.platform} onChange={v => set("platform", v)} colorFor={p => PLATFORM_COLOR[p]} />
+          <Segmented options={PIECE_PLATFORMS} value={piece.platform} onChange={v => set("platform", v)} colorFor={p => PLATFORM_COLOR[p]} />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 90px", gap: 10, marginBottom: 18 }}>

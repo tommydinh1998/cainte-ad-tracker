@@ -108,7 +108,7 @@ async function initDB() {
     );
     INSERT INTO app_settings (id, monthly_budget) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;
   `);
-  // Per-collaboration platform (Instagram / TikTok / Both) + delivered content pieces.
+  // Per-collaboration platform (Instagram / TikTok / YouTube / Both) + delivered content pieces.
   // "Meta" was the old label for Instagram — normalised here so the UI has one vocabulary.
   await pool.query(`
     ALTER TABLE collaborations ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT '';
@@ -132,7 +132,7 @@ async function initDB() {
     UPDATE collaborations c SET platform = cr.platform
     FROM creators cr
     WHERE c.creator_id = cr.id AND (c.platform IS NULL OR c.platform = '')
-      AND cr.platform IN ('Instagram','TikTok','Both');
+      AND cr.platform IN ('Instagram','TikTok','YouTube','Both');
   `);
   // ── Multi-brand ─────────────────────────────────────────────────────
   // Each brand runs the same three products over its own data. Only the root
