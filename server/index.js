@@ -127,7 +127,11 @@ async function initDB() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS content_pieces_collab_idx ON content_pieces (collab_id);
+    -- true once a collaboration's agreed deliverables have been auto-logged as
+    -- content (see autoLogDeliverables) — so a later manual clean-up sticks.
+    ALTER TABLE collaborations ADD COLUMN IF NOT EXISTS auto_content BOOLEAN NOT NULL DEFAULT false;
   `);
+  await backfillAutoContent();
   // Backfill: collaborations created before the per-collab platform field inherit the creator's.
   await pool.query(`
     UPDATE collaborations c SET platform = cr.platform
@@ -518,6 +522,53 @@ const mapSourcing = (s) => ({
   createdAt:   s.created_at,
 });
 
+// ── Auto-log agreed deliverables as delivered content ────────────────────────
+// In practice the team records what was *agreed* (deliverables) and flips the
+// collaboration to "completed" — they rarely log each piece via "+ Content".
+// So the first time a collaboration is completed and has no content logged,
+// every agreed deliverable becomes one content piece (qty 1, dated the day it
+// was completed). The rows are ordinary content_pieces: editable, deletable,
+// and never re-created (auto_content flag).
+const PIECE_PLATFORM_BY_TYPE = { 'TikTok Video': 'TikTok', 'YouTube Video': 'YouTube', Reel: 'Instagram', Story: 'Instagram', Post: 'Instagram' };
+const SINGLE_PLATFORMS = ['Instagram', 'TikTok', 'YouTube'];
+const AUTO_NOTE = 'Auto-logged from agreed deliverables';
+// YYYY-MM-DD in Copenhagen time (en-CA formats as ISO date).
+const cphDate = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Copenhagen', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+
+async function autoLogDeliverables(db, collab, postedOn = cphDate()) {
+  if (!collab || collab.status !== 'completed' || collab.auto_content) return [];
+  const deliverables = Array.isArray(collab.deliverables) ? collab.deliverables.filter(Boolean) : [];
+  if (!deliverables.length) return [];
+  const existing = await db.query('SELECT 1 FROM content_pieces WHERE collab_id=$1 LIMIT 1', [collab.id]);
+  // Mark as handled either way: content logged by hand must not be doubled up.
+  await db.query('UPDATE collaborations SET auto_content=true WHERE id=$1', [collab.id]);
+  if (existing.rows.length) return [];
+  const rows = [];
+  for (const type of deliverables) {
+    const platform = SINGLE_PLATFORMS.includes(collab.platform) ? collab.platform : (PIECE_PLATFORM_BY_TYPE[type] || '');
+    const r = await db.query(
+      `INSERT INTO content_pieces (collab_id,type,platform,qty,posted_on,link,notes)
+       VALUES ($1,$2,$3,1,$4,'',$5) RETURNING *`,
+      [collab.id, type, platform, postedOn, AUTO_NOTE]
+    );
+    rows.push(r.rows[0]);
+  }
+  return rows;
+}
+
+// One-off on boot: collaborations completed before auto-logging existed get
+// their deliverables logged, dated when they were last touched (≈ completion).
+async function backfillAutoContent() {
+  const r = await pool.query(
+    `SELECT * FROM collaborations
+     WHERE status='completed' AND NOT auto_content
+       AND jsonb_array_length(COALESCE(deliverables,'[]'::jsonb)) > 0`
+  );
+  let pieces = 0;
+  for (const c of r.rows) pieces += (await autoLogDeliverables(pool, c, cphDate(new Date(c.updated_at)))).length;
+  if (r.rows.length) console.log(`auto-content backfill: ${r.rows.length} completed collaborations, ${pieces} content pieces logged`);
+}
+
 // Content pieces are edited as a whole list on the collaboration, so a save
 // replaces the rows for that collaboration (ids are not referenced anywhere).
 async function replaceContent(client, collabId, list) {
@@ -556,6 +607,7 @@ async function insertCollaboration(client, creatorId, c) {
   );
   const row = r.rows[0];
   const content = Array.isArray(c.content) ? await replaceContent(client, row.id, c.content) : [];
+  content.push(...await autoLogDeliverables(client, row));
   return { row, content };
 }
 
@@ -666,6 +718,7 @@ app.put('/api/collaborations/:id', async (req, res) => {
     } else {
       rows = (await client.query('SELECT * FROM content_pieces WHERE collab_id=$1', [req.params.id])).rows;
     }
+    rows.push(...await autoLogDeliverables(client, r.rows[0]));
     await client.query('COMMIT');
     res.json(r.rows[0] ? mapCollab(r.rows[0], [], rows) : { success: true });
   } catch (e) {
@@ -710,8 +763,9 @@ app.delete('/api/content/:id', async (req, res) => {
 app.patch('/api/collaborations/:id', async (req, res) => {
   const { status } = req.body;
   try {
-    await pool.query(`UPDATE collaborations SET status=$1, updated_at=NOW() WHERE id=$2`, [status, req.params.id]);
-    res.json({ success: true });
+    const r = await pool.query(`UPDATE collaborations SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING *`, [status, req.params.id]);
+    const added = await autoLogDeliverables(pool, r.rows[0]);
+    res.json({ success: true, addedContent: added.map(mapContent) });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 

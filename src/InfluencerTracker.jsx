@@ -1030,7 +1030,12 @@ export default function InfluencerTracker() {
 
   const handleCollabStatus = async (creatorId, collabId, status) => {
     setCreators(prev => prev.map(c => c.id !== creatorId ? c : { ...c, collaborations: c.collaborations.map(co => co.id !== collabId ? co : { ...co, status }) }));
-    await api(`/api/collaborations/${collabId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    const res = await api(`/api/collaborations/${collabId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    // Completing a collaboration auto-logs its agreed deliverables as content — show them right away.
+    const { addedContent = [] } = await res.json().catch(() => ({}));
+    if (addedContent.length) {
+      setCreators(prev => prev.map(c => c.id !== creatorId ? c : { ...c, collaborations: c.collaborations.map(co => co.id !== collabId ? co : { ...co, content: [...addedContent, ...(co.content || [])] }) }));
+    }
   };
 
   const handleDeleteCollab = async (creatorId, collabId) => {
@@ -1479,6 +1484,9 @@ export default function InfluencerTracker() {
               <MonthlyContentBars months={yearMonths} selected={selectedMonth} onSelect={setSelectedMonth} />
               <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
                 <TypeLegend totals={yearTypeTotals} />
+                <div style={{ fontSize: 12, color: T.textTert, marginTop: 10 }}>
+                  Completed collaborations count their agreed deliverables automatically (one piece each). Use <b>+ Content</b> on a collaboration to log extra pieces or fix dates and quantities.
+                </div>
               </div>
             </div>
 
