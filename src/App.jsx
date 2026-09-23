@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { T } from "./theme.jsx";
 import AdTracker from "./AdTracker.jsx";
 import InfluencerTracker from "./InfluencerTracker.jsx";
 import CollectionTracker from "./CollectionTracker.jsx";
 import BudgetTracker from "./BudgetTracker.jsx";
 import KpiTracker from "./KpiTracker.jsx";
+import TaskTracker from "./TaskTracker.jsx";
 import { BRANDS, getBrand, setBrand } from "./brand.js";
 
 const PRODUCTS = [
@@ -13,6 +14,7 @@ const PRODUCTS = [
   { key: "collection", label: "Collection Tracker" },
   { key: "budget",     label: "Kampagne Budget" },
   { key: "kpi",        label: "KPI" },
+  { key: "tasks",      label: "Team Tasks" },
 ];
 
 export default function App() {
@@ -38,6 +40,22 @@ export default function App() {
     setProduct(key);
     sessionStorage.setItem("cainte_product", key);
   };
+
+  // Cross-product links (see goTo in brand.js). The hints are consumed by the
+  // target tracker when it mounts; bumping `nav` forces a remount even when
+  // the product is already active.
+  const [nav, setNav] = useState(0);
+  useEffect(() => {
+    const f = (e) => {
+      const d = e.detail || {};
+      if (d.product === "collection" && d.collectionId) sessionStorage.setItem("cainte_ct_open", String(d.collectionId));
+      if (d.product === "tasks") sessionStorage.setItem("cainte_tk_collection", d.collectionId ? String(d.collectionId) : "");
+      if (d.product) switchProduct(d.product);
+      setNav(n => n + 1);
+    };
+    window.addEventListener("ops:navigate", f);
+    return () => window.removeEventListener("ops:navigate", f);
+  }, []);
 
   // Switching brand remounts the active tracker (see key={brand} below), which
   // re-runs its initial fetch against the new brand.
@@ -120,10 +138,12 @@ export default function App() {
         : product === "influencer"
           ? <InfluencerTracker key={brand} />
           : product === "collection"
-            ? <CollectionTracker key={brand} />
+            ? <CollectionTracker key={`${brand}-${nav}`} />
             : product === "budget"
               ? <BudgetTracker key={brand} />
-              : <KpiTracker key={brand} />}
+              : product === "tasks"
+                ? <TaskTracker key={`${brand}-${nav}`} />
+                : <KpiTracker key={brand} />}
     </div>
   );
 }

@@ -32,3 +32,11 @@ export const setBrand = (key) => {
 // with the active brand attached.
 export const api = (path, opts = {}) =>
   fetch(path, { ...opts, headers: { ...(opts.headers || {}), "X-Brand": current } });
+
+// Cross-product navigation (e.g. a collection's tasks → Team Tasks, a task's
+// collection chip → Collection Tracker). App.jsx listens, stores the hints in
+// sessionStorage and switches product; the target tracker reads the hints on
+// mount. Hints: { product, collectionId } (Collection Tracker opens it) or
+// { product: "tasks", collectionId } (Team Tasks filters to it).
+export const goTo = (detail) => window.dispatchEvent(new CustomEvent("ops:navigate", { detail }));
+export const takeHint = (key) => { const v = sessionStorage.getItem(key); if (v !== null) sessionStorage.removeItem(key); return v; };

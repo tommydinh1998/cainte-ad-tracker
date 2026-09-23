@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { T, Chip } from "./theme.jsx";
-import { api } from "./brand.js";
+import { api, goTo, takeHint } from "./brand.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const GRAY = "#8E8E93";
@@ -89,7 +89,7 @@ const SECTIONS = {
     columns: [["activity_date", "Date", "date"], ["type", "Activity"], ["title", "Title"], ["status", "Status", "badge"], ["owner", "Responsible"]],
   },
   tasks: {
-    title: "Tasks", singular: "task",
+    title: "Team Tasks", singular: "task",
     fields: [
       { key: "title", label: "Task", type: "text", required: true },
       { key: "owner", label: "Responsible", type: "text" },
@@ -410,7 +410,135 @@ function buildEvents(data) {
   return ev.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-const EMPTY = { collections: [], products: [], samples: [], content_items: [], marketing_activities: [], tasks: [], ideas: [], idea_files: [], collection_files: [] };
+const EMPTY = { collections: [], products: [], samples: [], content_items: [], marketing_activities: [], tasks: [], ideas: [], idea_files: [], collection_files: [], departments: [] };
+
+// ── Team Tasks sync ──────────────────────────────────────────────────────────
+// Tasks are Team Tasks rows linked to this collection (tk_tasks.collection_id).
+// The Collection Tracker shows the high-level roll-up; the day-to-day work
+// happens in Team Tasks, per department.
+const tkReq = (method, path, body) => api(path, body ? jreq(method, body) : { method }).then((r) => r.json());
+const dlColor = (deadline, status, today) => (!deadline || status === "done" ? T.textSec : iso(deadline) < today ? T.red : daysUntil(deadline) <= 2 ? T.red : daysUntil(deadline) <= 5 ? T.orange : T.textSec);
+
+function TaskProgress({ tasks, today }) {
+  const done = tasks.filter((t) => t.tk_status === "done").length;
+  const overdue = tasks.filter((t) => t.tk_status !== "done" && t.deadline && iso(t.deadline) < today).length;
+  const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: T.textSec, marginBottom: 4 }}>
+        <span>{tasks.length ? `${done}/${tasks.length} tasks done` : "No tasks linked"}</span>
+        {overdue > 0 && <span style={{ color: T.red, fontWeight: 700 }}>{overdue} overdue</span>}
+      </div>
+      <div style={{ height: 6, borderRadius: 99, background: T.pillBg, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: pct === 100 ? T.green : T.blue }} />
+      </div>
+    </div>
+  );
+}
+
+function TeamTasksPanel({ collection, tasks, departments, today, onChanged }) {
+  const [title, setTitle] = useState("");
+  const [dept, setDept] = useState(departments[0]?.key || "");
+  const [owner, setOwner] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!dept && departments[0]) setDept(departments[0].key); }, [departments]);
+  const deptOf = (key) => departments.find((d) => d.key === key) || { key, label: key, short: key, color: GRAY };
+  const done = tasks.filter((t) => t.tk_status === "done").length;
+  const overdue = tasks.filter((t) => t.tk_status !== "done" && t.deadline && iso(t.deadline) < today);
+  const next = tasks.filter((t) => t.tk_status !== "done" && t.deadline && iso(t.deadline) >= today).sort((a, b) => iso(a.deadline).localeCompare(iso(b.deadline)))[0];
+  const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+  const groups = departments.map((d) => ({ dept: d, items: tasks.filter((t) => t.department === d.key) })).filter((g) => g.items.length);
+  const orphan = tasks.filter((t) => !departments.some((d) => d.key === t.department));
+  if (orphan.length) groups.push({ dept: { key: "_", label: "Other", short: "Other", color: GRAY }, items: orphan });
+
+  const add = async (e) => {
+    e.preventDefault();
+    if (!title.trim() || !dept) return;
+    setBusy(true);
+    try {
+      await tkReq("POST", "/api/tk/tasks", { department: dept, title: title.trim(), owner: owner.trim(), deadline: deadline || null, collection_id: collection.id });
+      setTitle(""); setDeadline("");
+      await onChanged();
+    } finally { setBusy(false); }
+  };
+  const toggle = async (t) => { await tkReq("PUT", `/api/tk/tasks/${t.id}`, { status: t.tk_status === "done" ? "todo" : "done" }); await onChanged(); };
+  const unlink = async (t) => { if (!confirm(`Remove “${t.title}” from ${collection.name}? The task stays in Team Tasks.`)) return; await tkReq("PUT", `/api/tk/tasks/${t.id}`, { collection_id: null }); await onChanged(); };
+  const sortItems = (items) => [...items].sort((a, b) => (a.tk_status === "done") - (b.tk_status === "done") || (a.deadline ? iso(a.deadline) : "9999").localeCompare(b.deadline ? iso(b.deadline) : "9999"));
+
+  return (
+    <div style={{ ...card, overflow: "hidden" }}>
+      <div style={{ padding: "16px 20px", borderBottom: `1px solid ${T.border}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em" }}>Team Tasks</div>
+            <div style={{ fontSize: 12.5, color: T.textSec, marginTop: 2 }}>Synced with the Team Tasks product — the same tasks, grouped by department.</div>
+          </div>
+          <button onClick={() => goTo({ product: "tasks", collectionId: collection.id })}
+            style={{ background: T.text, border: "none", borderRadius: 99, color: "#fff", padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            Open in Team Tasks ›
+          </button>
+        </div>
+        <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 14, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 220px", display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1, height: 8, borderRadius: 99, background: T.pillBg, overflow: "hidden" }}><div style={{ width: `${pct}%`, height: "100%", background: pct === 100 ? T.green : T.blue }} /></div>
+            <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>{done}/{tasks.length} done · {pct}%</span>
+          </div>
+          {overdue.length > 0 && <Chip color={T.red}>{overdue.length} overdue</Chip>}
+          {next && <span style={{ fontSize: 12.5, color: T.textSec }}>Next deadline: <b style={{ color: T.text }}>{fmtD(next.deadline)}</b> — {next.title}</span>}
+        </div>
+        <form onSubmit={add} style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="New task for this collection…" style={{ ...smallInput, flex: "1 1 220px" }} {...focusBlue} />
+          <select value={dept} onChange={(e) => setDept(e.target.value)} style={{ ...smallInput, width: 170 }}>
+            {departments.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+          </select>
+          <input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="Owner" style={{ ...smallInput, width: 130 }} {...focusBlue} />
+          <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} style={{ ...smallInput, width: 150, color: deadline ? T.text : T.textTert }} />
+          <button type="submit" disabled={busy || !title.trim() || !dept}
+            style={{ background: title.trim() ? T.blue : T.pillBg, border: "none", borderRadius: 10, color: title.trim() ? "#fff" : T.textTert, padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: title.trim() ? "pointer" : "default" }}>
+            Add
+          </button>
+        </form>
+      </div>
+      {tasks.length === 0 ? (
+        <div style={{ padding: "26px 20px", color: T.textTert, fontSize: 14, textAlign: "center" }}>No tasks linked to this collection yet. Add one above, or pick this collection when creating a task in Team Tasks.</div>
+      ) : groups.map(({ dept: d, items }) => (
+        <div key={d.key} style={{ padding: "10px 20px 6px", borderBottom: `1px solid ${T.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <span style={{ width: 9, height: 9, borderRadius: "50%", background: d.color }} />
+            <span style={{ fontSize: 12, fontWeight: 800, color: d.color, textTransform: "uppercase", letterSpacing: "0.07em" }}>{d.label}</span>
+            <span style={{ fontSize: 12, color: T.textTert }}>{items.filter((t) => t.tk_status === "done").length}/{items.length} done</span>
+          </div>
+          {sortItems(items).map((t) => {
+            const isDone = t.tk_status === "done";
+            return (
+              <div key={t.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "7px 0" }}>
+                <button onClick={() => toggle(t)} title={isDone ? "Mark as not done" : "Mark as done"}
+                  style={{ width: 22, height: 22, minWidth: 22, borderRadius: "50%", marginTop: 1, cursor: "pointer", border: `2px solid ${isDone ? T.green : t.tk_priority === "high" ? T.orange : "rgba(60,60,67,0.25)"}`, background: isDone ? T.green : "transparent", color: "#fff", fontSize: 12, fontWeight: 800, lineHeight: 1 }}>
+                  {isDone ? "✓" : ""}
+                </button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: t.tk_priority === "high" && !isDone ? 700 : 500, color: isDone ? T.textTert : T.text, textDecoration: isDone ? "line-through" : "none" }}>{t.title}</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                    {t.owner && <Chip color={T.teal}>👤 {t.owner}</Chip>}
+                    {t.tk_status === "doing" && <Chip color={T.blue}>In progress</Chip>}
+                    {t.tk_priority === "high" && !isDone && <Chip color={T.orange}>High</Chip>}
+                    {t.deadline && <Chip color={dlColor(t.deadline, t.tk_status, today)}>{isDone ? "" : iso(t.deadline) < today ? "⚠ " : "📅 "}{fmtD(t.deadline)}</Chip>}
+                    {(t.files || []).map((f) => (
+                      <a key={f.id} href={`/api/tk/files/${f.id}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, fontWeight: 600, color: T.blue, background: T.blue + "12", borderRadius: 6, padding: "2px 8px", textDecoration: "none" }}>📎 {f.filename}</a>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={() => unlink(t)} title="Remove from this collection (keeps the task)"
+                  style={{ border: "none", background: "transparent", color: T.textTert, fontSize: 16, cursor: "pointer", lineHeight: 1, padding: "2px 4px" }}>⨯</button>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ── Main component ───────────────────────────────────────────────────────────
 export default function CollectionTracker() {
@@ -441,7 +569,11 @@ export default function CollectionTracker() {
   const [calType, setCalType] = useState("all");
 
   const reload = () => ctApi.data().then((d) => { setData(d); setLoading(false); }).catch(() => setLoading(false));
-  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    reload();
+    const hint = takeHint("cainte_ct_open");
+    if (hint) { setDetailId(Number(hint)); setDetailTab("tasks"); setActiveTab("collections"); }
+  }, []);
 
   const events = useMemo(() => buildEvents(data), [data]);
   const today = todayISO();
@@ -726,7 +858,7 @@ export default function CollectionTracker() {
               {Object.entries(SECTIONS).map(([key, cfg]) =>
                 pill(detailTab === key, cfg.title, () => setDetailTab(key)))}
             </div>
-            <SectionTable sectionKey={detailTab} />
+            {detailTab === "tasks" ? <TeamTasksPanel collection={detail} tasks={childRows("tasks")} departments={data.departments} today={today} onChanged={reload} /> : <SectionTable sectionKey={detailTab} />}
           </>
         ) : activeTab === "dashboard" ? (
           /* ── DASHBOARD ── */
@@ -754,6 +886,7 @@ export default function CollectionTracker() {
                       <span style={{ fontSize: 12, color: T.textSec }}>{fmtD(c.launch_date)}</span>
                     </div>
                     {c.owners && <div style={{ fontSize: 12, color: T.textSec, marginTop: 8 }}>{c.owners}</div>}
+                    <TaskProgress tasks={data.tasks.filter((t) => t.collection_id === c.id)} today={today} />
                   </div>
                 ))}
               </div>

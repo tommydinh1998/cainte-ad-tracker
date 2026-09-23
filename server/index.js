@@ -139,31 +139,7 @@ async function initDB() {
     WHERE c.creator_id = cr.id AND (c.platform IS NULL OR c.platform = '')
       AND cr.platform IN ('Instagram','TikTok','YouTube','Both');
   `);
-  // ── Multi-brand ─────────────────────────────────────────────────────
-  // Each brand runs the same three products over its own data. Only the root
-  // tables carry a brand; children hang off them, and everything addressed by
-  // a globally-unique id needs no scoping. Existing rows are all Cainté.
-  await pool.query(`
-    ALTER TABLE batches        ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
-    ALTER TABLE creators       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
-    ALTER TABLE sourcing       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
-    ALTER TABLE ct_collections ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
-    ALTER TABLE ct_ideas       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
-    CREATE INDEX IF NOT EXISTS batches_brand_idx        ON batches (brand);
-    CREATE INDEX IF NOT EXISTS creators_brand_idx       ON creators (brand);
-    CREATE INDEX IF NOT EXISTS sourcing_brand_idx       ON sourcing (brand);
-    CREATE INDEX IF NOT EXISTS ct_collections_brand_idx ON ct_collections (brand);
-    CREATE INDEX IF NOT EXISTS ct_ideas_brand_idx       ON ct_ideas (brand);
-  `);
-  // The budget setting becomes one row per brand (id 1 = cainte, id 2 = elle).
-  await pool.query(`
-    ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS brand TEXT;
-    UPDATE app_settings SET brand='cainte' WHERE id=1 AND brand IS NULL;
-    INSERT INTO app_settings (id, brand, monthly_budget) VALUES (2,'elle',0)
-      ON CONFLICT (id) DO NOTHING;
-    CREATE UNIQUE INDEX IF NOT EXISTS app_settings_brand_idx ON app_settings (brand);
-  `);
-  // ── Collection Tracker ──────────────────────────────────────────────
+  // ── Collection Tracker (created before the multi-brand ALTERs so a fresh DB boots) ──────────────────────────────────────────────
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ct_collections (
       id SERIAL PRIMARY KEY,
@@ -247,6 +223,30 @@ async function initDB() {
       data BYTEA,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+  // ── Multi-brand ─────────────────────────────────────────────────────
+  // Each brand runs the same three products over its own data. Only the root
+  // tables carry a brand; children hang off them, and everything addressed by
+  // a globally-unique id needs no scoping. Existing rows are all Cainté.
+  await pool.query(`
+    ALTER TABLE batches        ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    ALTER TABLE creators       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    ALTER TABLE sourcing       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    ALTER TABLE ct_collections ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    ALTER TABLE ct_ideas       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    CREATE INDEX IF NOT EXISTS batches_brand_idx        ON batches (brand);
+    CREATE INDEX IF NOT EXISTS creators_brand_idx       ON creators (brand);
+    CREATE INDEX IF NOT EXISTS sourcing_brand_idx       ON sourcing (brand);
+    CREATE INDEX IF NOT EXISTS ct_collections_brand_idx ON ct_collections (brand);
+    CREATE INDEX IF NOT EXISTS ct_ideas_brand_idx       ON ct_ideas (brand);
+  `);
+  // The budget setting becomes one row per brand (id 1 = cainte, id 2 = elle).
+  await pool.query(`
+    ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS brand TEXT;
+    UPDATE app_settings SET brand='cainte' WHERE id=1 AND brand IS NULL;
+    INSERT INTO app_settings (id, brand, monthly_budget) VALUES (2,'elle',0)
+      ON CONFLICT (id) DO NOTHING;
+    CREATE UNIQUE INDEX IF NOT EXISTS app_settings_brand_idx ON app_settings (brand);
   `);
   // ── Kampagne Budget ─────────────────────────────────────────────────
   // Campaigns are the brand-scoped root; expenses (posteringer) hang off a
@@ -882,13 +882,23 @@ app.get('/api/ct/data', async (req, res) => {
       // other ct_* table hangs off a collection.
       const where = (key === 'collections') ? 'brand=$1' : (key === 'ideas') ? 'brand=$1' : inBrand;
       const r = await pool.query(`SELECT * FROM ${cfg.table} WHERE ${where} ORDER BY ${orderBy}`, [brand]);
-      out[key] = r.rows;
+      // DATE columns come back as local-midnight JS Dates; format them from
+      // local components so the client never sees the previous day.
+      out[key] = r.rows.map(row => { const o = { ...row }; for (const f of (cfg.dates || [])) o[f] = kbDateOut(o[f]); return o; });
     }
     // File metadata only (never the bytes) — bytes stream via the file endpoints
     const f = await pool.query('SELECT id, idea_id, filename, mimetype, size FROM ct_idea_files WHERE idea_id IN (SELECT id FROM ct_ideas WHERE brand=$1) ORDER BY id', [brand]);
     out.idea_files = f.rows;
     const cf = await pool.query(`SELECT id, collection_id, filename, mimetype, size FROM ct_collection_files WHERE ${inBrand} ORDER BY id`, [brand]);
     out.collection_files = cf.rows;
+    // Tasks are Team Tasks rows linked to a collection (ct_tasks is retired).
+    const tk = await pool.query('SELECT * FROM tk_tasks WHERE brand=$1 AND collection_id IS NOT NULL ORDER BY deadline NULLS LAST, created_at', [brand]);
+    const tkLinks = await pool.query('SELECT l.task_id, f.id, f.filename, f.mimetype, f.size FROM tk_task_files l JOIN tk_files f ON f.id = l.file_id WHERE f.brand=$1 ORDER BY f.id', [brand]);
+    const tkFiles = {};
+    for (const r of tkLinks.rows) (tkFiles[r.task_id] = tkFiles[r.task_id] || []).push({ id: r.id, filename: r.filename, mimetype: r.mimetype, size: r.size });
+    out.tasks = tk.rows.map(r => ({ ...tkAsCtTask(r), files: tkFiles[r.id] || [] }));
+    const depts = await pool.query('SELECT * FROM tk_departments WHERE brand=$1 ORDER BY sort_order, id', [brand]);
+    out.departments = depts.rows;
     res.json(out);
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
@@ -1766,13 +1776,355 @@ async function kpiTick() {
   } catch (e) { console.error('kpiTick:', e.message); }
 }
 
+// ── Team Tasks ────────────────────────────────────────────────────────────────
+// Per-department todo lists (Content / Email / Influencer & Social / Paid ads)
+// with deadlines, owners, priorities and a shared calendar of meetings and
+// reminders (one-off, weekly, biweekly or monthly). Recurrence is expanded on
+// the client for the visible month; the server stores the rule only.
+// Departments live in tk_departments (seeded with these four on an empty
+// brand); tasks and events are validated against the brand's current list.
+const TK_DEFAULT_DEPTS = [
+  ['content', 'Content',                   'Content',  '#AF52DE', 'Shoots, photo/video, product copy, site content.'],
+  ['email',   'Email',                     'Email',    '#007AFF', 'Campaigns, flows, newsletters, Klaviyo.'],
+  ['social',  'Influencer / Social media', 'Social',   '#FF2D55', 'Creators, gifting, collabs, organic posting.'],
+  ['paid',    'Paid ads',                  'Paid ads', '#FF9500', 'Meta, TikTok, Google — creatives, budgets, reporting.'],
+];
+const tkDeptKeys = async (brand) =>
+  (await pool.query('SELECT key FROM tk_departments WHERE brand=$1', [brand])).rows.map(r => r.key);
+const tkSlug = (label) => String(label).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'dept';
+const TK_STATUS = ['todo', 'doing', 'done'];
+const TK_PRIORITY = ['normal', 'high'];
+const TK_RECUR = ['none', 'weekly', 'biweekly', 'monthly'];
+const TK_KINDS = ['meeting', 'reminder'];
+const tkDate = (v) => {
+  const s = v ? String(v).slice(0, 10) : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+};
+const tkTaskOut = (r) => ({ ...r, deadline: kbDateOut(r.deadline) });
+const tkEventOut = (r) => ({ ...r, start_date: kbDateOut(r.start_date), until: kbDateOut(r.until) });
+
+async function initTasks() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS tk_departments (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      short TEXT NOT NULL DEFAULT '',
+      color TEXT NOT NULL DEFAULT '#007AFF',
+      hint TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS tk_departments_brand_key ON tk_departments (brand, key);
+    CREATE TABLE IF NOT EXISTS tk_tasks (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      department TEXT NOT NULL,
+      title TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      owner TEXT NOT NULL DEFAULT '',
+      priority TEXT NOT NULL DEFAULT 'normal',
+      status TEXT NOT NULL DEFAULT 'todo',
+      deadline DATE,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS tk_tasks_brand_dept ON tk_tasks (brand, department);
+    CREATE TABLE IF NOT EXISTS tk_events (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      title TEXT NOT NULL,
+      department TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'meeting',
+      start_date DATE NOT NULL,
+      time TEXT NOT NULL DEFAULT '',
+      recurrence TEXT NOT NULL DEFAULT 'none',
+      until DATE,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS tk_events_brand ON tk_events (brand);
+    ALTER TABLE tk_tasks ADD COLUMN IF NOT EXISTS collection_id INTEGER REFERENCES ct_collections(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS tk_tasks_collection ON tk_tasks (collection_id);
+    -- Attachments: one blob can hang on many tasks (e.g. a playbook on every launch task).
+    CREATE TABLE IF NOT EXISTS tk_files (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      filename TEXT NOT NULL,
+      mimetype TEXT NOT NULL DEFAULT 'application/octet-stream',
+      size INTEGER NOT NULL DEFAULT 0,
+      data BYTEA,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS tk_task_files (
+      task_id INTEGER NOT NULL REFERENCES tk_tasks(id) ON DELETE CASCADE,
+      file_id INTEGER NOT NULL REFERENCES tk_files(id) ON DELETE CASCADE,
+      PRIMARY KEY (task_id, file_id)
+    );
+  `);
+  for (const brand of BRANDS) {
+    const n = await pool.query('SELECT COUNT(*)::int AS n FROM tk_departments WHERE brand=$1', [brand]);
+    if (n.rows[0].n > 0) continue;
+    for (const [i, [key, label, short, color, hint]] of TK_DEFAULT_DEPTS.entries()) {
+      await pool.query(
+        'INSERT INTO tk_departments (brand, key, label, short, color, hint, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
+        [brand, key, label, short, color, hint, i]
+      );
+    }
+  }
+  // One-time: the Collection Tracker used to keep its own ct_tasks. Team Tasks
+  // is now the single task list, so any leftover rows move over (department =
+  // the brand's first department) and ct_tasks is emptied.
+  const legacy = await pool.query('SELECT t.*, c.brand FROM ct_tasks t JOIN ct_collections c ON c.id = t.collection_id');
+  for (const t of legacy.rows) {
+    const dept = await pool.query('SELECT key FROM tk_departments WHERE brand=$1 ORDER BY sort_order, id LIMIT 1', [t.brand]);
+    if (!dept.rows.length) continue;
+    const status = t.status === 'Done' ? 'done' : t.status === 'In progress' ? 'doing' : 'todo';
+    await pool.query(
+      `INSERT INTO tk_tasks (brand, department, title, owner, priority, status, deadline, collection_id, completed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [t.brand, dept.rows[0].key, t.title, t.owner || '', t.priority === 'High' ? 'high' : 'normal', status, t.deadline || null, t.collection_id, status === 'done' ? new Date() : null]
+    );
+    await pool.query('DELETE FROM ct_tasks WHERE id=$1', [t.id]);
+  }
+}
+
+// Collection ids the brand owns — a task may only link to one of these.
+const tkCollectionId = async (brand, v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const r = await pool.query('SELECT id FROM ct_collections WHERE id=$1 AND brand=$2', [Number(v) || 0, brand]);
+  return r.rows.length ? r.rows[0].id : null;
+};
+// Team Tasks rows in the shape the Collection Tracker's dashboard, list and
+// calendar already understand (Title-case status/priority).
+const tkStatusLabel = { todo: 'To do', doing: 'In progress', done: 'Done' };
+const tkAsCtTask = (r) => ({ ...tkTaskOut(r), status: tkStatusLabel[r.status] || 'To do', tk_status: r.status, priority: r.priority === 'high' ? 'High' : 'Medium', tk_priority: r.priority });
+
+// One payload: every task (open + done) and every event rule for the brand.
+app.get('/api/tk/data', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const links = await pool.query(
+      `SELECT l.task_id, f.id, f.filename, f.mimetype, f.size FROM tk_task_files l JOIN tk_files f ON f.id = l.file_id WHERE f.brand=$1 ORDER BY f.id`, [brand]);
+    const filesByTask = {};
+    for (const r of links.rows) (filesByTask[r.task_id] = filesByTask[r.task_id] || []).push({ id: r.id, filename: r.filename, mimetype: r.mimetype, size: r.size });
+    const [depts, tasks, events, cols] = await Promise.all([
+      pool.query('SELECT * FROM tk_departments WHERE brand=$1 ORDER BY sort_order, id', [brand]),
+      pool.query('SELECT * FROM tk_tasks WHERE brand=$1 ORDER BY created_at DESC', [brand]),
+      pool.query('SELECT * FROM tk_events WHERE brand=$1 ORDER BY start_date, time', [brand]),
+      pool.query('SELECT id, name, launch_date, status FROM ct_collections WHERE brand=$1 ORDER BY launch_date NULLS LAST, id', [brand]),
+    ]);
+    res.json({ departments: depts.rows, tasks: tasks.rows.map(r => ({ ...tkTaskOut(r), files: filesByTask[r.id] || [] })), events: events.rows.map(tkEventOut),
+      collections: cols.rows.map(c => ({ ...c, launch_date: kbDateOut(c.launch_date) })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/tk/departments', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const { label, short, color, hint } = req.body || {};
+    if (!label || !String(label).trim()) return res.status(400).json({ error: 'Name required' });
+    const existing = await tkDeptKeys(brand);
+    let key = tkSlug(label), base = key, i = 2;
+    while (existing.includes(key)) key = `${base}-${i++}`;
+    const order = await pool.query('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM tk_departments WHERE brand=$1', [brand]);
+    const r = await pool.query(
+      'INSERT INTO tk_departments (brand, key, label, short, color, hint, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',
+      [brand, key, String(label).trim(), String(short || label).trim().slice(0, 24), /^#[0-9a-f]{6}$/i.test(color || '') ? color : '#007AFF', String(hint || '').trim(), order.rows[0].n]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Rename / recolour. The key never changes, so tasks and events stay attached.
+app.put('/api/tk/departments/:id', async (req, res) => {
+  try {
+    const cur = await pool.query('SELECT * FROM tk_departments WHERE id=$1 AND brand=$2', [req.params.id, brandOf(req)]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
+    const d = cur.rows[0], b = req.body || {};
+    const label = b.label !== undefined ? String(b.label).trim() || d.label : d.label;
+    const r = await pool.query(
+      'UPDATE tk_departments SET label=$1, short=$2, color=$3, hint=$4, sort_order=$5 WHERE id=$6 RETURNING *',
+      [label, b.short !== undefined ? String(b.short).trim().slice(0, 24) || label : d.short,
+       /^#[0-9a-f]{6}$/i.test(b.color || '') ? b.color : d.color,
+       b.hint !== undefined ? String(b.hint).trim() : d.hint,
+       Number.isInteger(b.sort_order) ? b.sort_order : d.sort_order, d.id]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Deleting a department deletes its tasks; its events fall back to "whole team".
+app.delete('/api/tk/departments/:id', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const cur = await pool.query('SELECT * FROM tk_departments WHERE id=$1 AND brand=$2', [req.params.id, brand]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
+    const key = cur.rows[0].key;
+    await pool.query('DELETE FROM tk_tasks WHERE brand=$1 AND department=$2', [brand, key]);
+    await pool.query("UPDATE tk_events SET department='' WHERE brand=$1 AND department=$2", [brand, key]);
+    await pool.query('DELETE FROM tk_departments WHERE id=$1', [cur.rows[0].id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/tk/tasks', async (req, res) => {
+  try {
+    const { department, title, note, owner, priority, deadline, collection_id } = req.body || {};
+    if (!(await tkDeptKeys(brandOf(req))).includes(department)) return res.status(400).json({ error: 'Unknown department' });
+    if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title required' });
+    const r = await pool.query(
+      `INSERT INTO tk_tasks (brand, department, title, note, owner, priority, deadline, collection_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [brandOf(req), department, String(title).trim(), note || '', (owner || '').trim(),
+       TK_PRIORITY.includes(priority) ? priority : 'normal', tkDate(deadline), await tkCollectionId(brandOf(req), collection_id)]
+    );
+    res.json(tkTaskOut(r.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Partial update. Moving to/from "done" stamps or clears completed_at.
+app.put('/api/tk/tasks/:id', async (req, res) => {
+  try {
+    const cur = await pool.query('SELECT * FROM tk_tasks WHERE id=$1 AND brand=$2', [req.params.id, brandOf(req)]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
+    const t = cur.rows[0], b = req.body || {};
+    const department = b.department && b.department !== t.department && (await tkDeptKeys(brandOf(req))).includes(b.department) ? b.department : t.department;
+    const title = b.title !== undefined ? String(b.title).trim() || t.title : t.title;
+    const note = b.note !== undefined ? String(b.note) : t.note;
+    const owner = b.owner !== undefined ? String(b.owner).trim() : t.owner;
+    const priority = TK_PRIORITY.includes(b.priority) ? b.priority : t.priority;
+    const status = TK_STATUS.includes(b.status) ? b.status : t.status;
+    const deadline = b.deadline !== undefined ? tkDate(b.deadline) : t.deadline;
+    const collectionId = b.collection_id !== undefined ? await tkCollectionId(brandOf(req), b.collection_id) : t.collection_id;
+    const completedAt = status === 'done' ? (t.status === 'done' ? t.completed_at : new Date()) : null;
+    const r = await pool.query(
+      `UPDATE tk_tasks SET department=$1, title=$2, note=$3, owner=$4, priority=$5, status=$6, deadline=$7,
+         completed_at=$8, collection_id=$9, updated_at=NOW() WHERE id=$10 RETURNING *`,
+      [department, title, note, owner, priority, status, deadline, completedAt, collectionId, t.id]
+    );
+    res.json(tkTaskOut(r.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/tk/tasks/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM tk_tasks WHERE id=$1 AND brand=$2', [req.params.id, brandOf(req)]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Task attachments ──────────────────────────────────────────────────────────
+const tkFileMeta = (f) => ({ id: f.id, filename: f.filename, mimetype: f.mimetype, size: f.size });
+
+// Upload a file and attach it to one task.
+app.post('/api/tk/tasks/:id/files', async (req, res) => {
+  const { filename, mimetype, dataBase64 } = req.body || {};
+  if (!filename || !dataBase64) return res.status(400).json({ error: 'filename and dataBase64 are required' });
+  try {
+    const brand = brandOf(req);
+    const t = await pool.query('SELECT id FROM tk_tasks WHERE id=$1 AND brand=$2', [req.params.id, brand]);
+    if (!t.rows.length) return res.status(404).json({ error: 'Not found' });
+    const buf = Buffer.from(dataBase64, 'base64');
+    if (buf.length > 10 * 1024 * 1024) return res.status(413).json({ error: 'Max 10 MB per file' });
+    const f = await pool.query('INSERT INTO tk_files (brand, filename, mimetype, size, data) VALUES ($1,$2,$3,$4,$5) RETURNING id, filename, mimetype, size',
+      [brand, String(filename).slice(0, 200), mimetype || 'application/octet-stream', buf.length, buf]);
+    await pool.query('INSERT INTO tk_task_files (task_id, file_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [t.rows[0].id, f.rows[0].id]);
+    res.json(tkFileMeta(f.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Attach an existing file to more tasks (one blob, many tasks).
+app.post('/api/tk/files/:id/link', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const f = await pool.query('SELECT id FROM tk_files WHERE id=$1 AND brand=$2', [req.params.id, brand]);
+    if (!f.rows.length) return res.status(404).json({ error: 'Not found' });
+    const ids = Array.isArray(req.body?.task_ids) ? req.body.task_ids.map(Number).filter(Boolean) : [];
+    const tasks = await pool.query('SELECT id FROM tk_tasks WHERE brand=$1 AND id = ANY($2::int[])', [brand, ids]);
+    for (const t of tasks.rows) await pool.query('INSERT INTO tk_task_files (task_id, file_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [t.id, f.rows[0].id]);
+    res.json({ linked: tasks.rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/tk/files/:id', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT filename, mimetype, data FROM tk_files WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).end();
+    const f = r.rows[0];
+    res.setHeader('Content-Type', f.mimetype);
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(f.filename)}"`);
+    res.send(f.data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Detach from one task; the blob goes when nothing references it any more.
+app.delete('/api/tk/tasks/:taskId/files/:fileId', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM tk_task_files WHERE task_id=$1 AND file_id=$2', [req.params.taskId, req.params.fileId]);
+    await pool.query('DELETE FROM tk_files WHERE id=$1 AND brand=$2 AND NOT EXISTS (SELECT 1 FROM tk_task_files WHERE file_id=$1)', [req.params.fileId, brandOf(req)]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+const tkEventFields = (b, prev = {}, deptKeys = []) => ({
+  title: b.title !== undefined ? String(b.title).trim() : prev.title,
+  department: deptKeys.includes(b.department) ? b.department : (b.department === '' ? '' : (prev.department || '')),
+  kind: TK_KINDS.includes(b.kind) ? b.kind : (prev.kind || 'meeting'),
+  start_date: b.start_date !== undefined ? tkDate(b.start_date) : prev.start_date,
+  time: b.time !== undefined ? String(b.time).slice(0, 5) : (prev.time || ''),
+  recurrence: TK_RECUR.includes(b.recurrence) ? b.recurrence : (prev.recurrence || 'none'),
+  until: b.until !== undefined ? tkDate(b.until) : (prev.until || null),
+  notes: b.notes !== undefined ? String(b.notes) : (prev.notes || ''),
+});
+
+app.post('/api/tk/events', async (req, res) => {
+  try {
+    const f = tkEventFields(req.body || {}, {}, await tkDeptKeys(brandOf(req)));
+    if (!f.title) return res.status(400).json({ error: 'Title required' });
+    if (!f.start_date) return res.status(400).json({ error: 'Date required' });
+    const r = await pool.query(
+      `INSERT INTO tk_events (brand, title, department, kind, start_date, time, recurrence, until, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [brandOf(req), f.title, f.department, f.kind, f.start_date, f.time, f.recurrence, f.until, f.notes]
+    );
+    res.json(tkEventOut(r.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/tk/events/:id', async (req, res) => {
+  try {
+    const cur = await pool.query('SELECT * FROM tk_events WHERE id=$1 AND brand=$2', [req.params.id, brandOf(req)]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
+    const f = tkEventFields(req.body || {}, cur.rows[0], await tkDeptKeys(brandOf(req)));
+    if (!f.title) return res.status(400).json({ error: 'Title required' });
+    if (!f.start_date) return res.status(400).json({ error: 'Date required' });
+    const r = await pool.query(
+      `UPDATE tk_events SET title=$1, department=$2, kind=$3, start_date=$4, time=$5, recurrence=$6, until=$7, notes=$8
+       WHERE id=$9 RETURNING *`,
+      [f.title, f.department, f.kind, f.start_date, f.time, f.recurrence, f.until, f.notes, req.params.id]
+    );
+    res.json(tkEventOut(r.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/tk/events/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM tk_events WHERE id=$1 AND brand=$2', [req.params.id, brandOf(req)]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.use(express.static(path.join(__dirname, '../dist')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
 const PORT = process.env.PORT || 3000;
-initDB().then(() => {
+initDB().then(initTasks).then(() => {
   app.listen(PORT, '0.0.0.0', () => console.log(`Server on port ${PORT}`));
   // Fredags- og mandagspåmindelser. Checkes hvert 5. minut.
   kpiTick();
