@@ -51,10 +51,13 @@ const monthKeysOfYear = (year) => MONTHS_SHORT.map((_, i) => `${year}-${String(i
 const STATUS = {
   upcoming:    { label: "Upcoming",    color: T.blue },
   in_progress: { label: "In Progress", color: T.orange },
+  ongoing:     { label: "Ongoing",     color: "#5856D6" },   // long-running partnership, no end date
   completed:   { label: "Completed",   color: T.green },
   cancelled:   { label: "Cancelled",   color: T.textSec },
 };
-const STATUS_KEYS = ["upcoming", "in_progress", "completed", "cancelled"];
+const STATUS_KEYS = ["upcoming", "in_progress", "ongoing", "completed", "cancelled"];
+// Statuses that count as "active" for creators and per-creator counts.
+const ACTIVE_STATUSES = ["upcoming", "in_progress", "ongoing"];
 
 const RATING_TAGS = ["Easy to work with", "Delivers on time", "Good performance", "Would collaborate again"];
 
@@ -1078,7 +1081,7 @@ export default function InfluencerTracker() {
   // ── Derived data ──
   const allCollabs = creators.flatMap(cr => (cr.collaborations || []).map(co => ({ creator: cr, collab: co })));
   const countStatus = (s) => allCollabs.filter(x => x.collab.status === s).length;
-  const activeCreators = creators.filter(cr => (cr.collaborations || []).some(co => co.status === "upcoming" || co.status === "in_progress")).length;
+  const activeCreators = creators.filter(cr => (cr.collaborations || []).some(co => ACTIVE_STATUSES.includes(co.status))).length;
   const giftingCount = allCollabs.filter(x => x.collab.type === "Gifting").length;
   const paidCount = allCollabs.filter(x => x.collab.type === "Paid").length;
 
@@ -1242,6 +1245,7 @@ export default function InfluencerTracker() {
               <div style={{ fontSize: 13, color: T.textSec, marginTop: 6, display: "flex", gap: 14, flexWrap: "wrap" }}>
                 {countStatus("upcoming") > 0 && <span style={{ color: T.blue, fontWeight: 500 }}>{countStatus("upcoming")} upcoming</span>}
                 {countStatus("in_progress") > 0 && <span style={{ color: T.orange, fontWeight: 500 }}>{countStatus("in_progress")} in progress</span>}
+                {countStatus("ongoing") > 0 && <span style={{ color: STATUS.ongoing.color, fontWeight: 500 }}>{countStatus("ongoing")} ongoing</span>}
                 <span>{activeCreators} active creator{activeCreators !== 1 ? "s" : ""}</span>
               </div>
             </div>
@@ -1302,6 +1306,7 @@ export default function InfluencerTracker() {
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
               <StatCard label="Upcoming" value={countStatus("upcoming")} color={T.blue} />
               <StatCard label="In Progress" value={countStatus("in_progress")} color={T.orange} />
+              <StatCard label="Ongoing" value={countStatus("ongoing")} color={STATUS.ongoing.color} />
               <StatCard label="Completed" value={countStatus("completed")} color={T.green} />
               <StatCard label="Active creators" value={activeCreators} />
               <StatCard label="Gifting" value={giftingCount} color={T.purple} />
@@ -1595,7 +1600,7 @@ export default function InfluencerTracker() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {filteredCreators.map(cr => {
                   const collabs = cr.collaborations || [];
-                  const ongoing = collabs.filter(c => c.status === "upcoming" || c.status === "in_progress").length;
+                  const ongoing = collabs.filter(c => ACTIVE_STATUSES.includes(c.status)).length;
                   const pieceTotal = countPieces(collabs.flatMap(c => c.content || []));
                   return (
                     <div key={cr.id} onClick={() => setProfileId(cr.id)}
