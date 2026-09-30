@@ -220,9 +220,19 @@ const CopyCodesBtn = ({ ads }) => {
   );
 };
 
+// ── Search ────────────────────────────────────────────────────────────────────
+// Spark codes are pasted with or without the leading "#" and sometimes with
+// stray whitespace, so both sides are normalized before comparing.
+const normSearch = s => (s || "").replace(/[#\s]/g, "").toLowerCase();
+const adMatchesSearch = (ad, q) =>
+  !!q && [ad.sparkCode, ad.name, ad.adId].some(v => normSearch(v).includes(q));
+
 // ── BatchCard ─────────────────────────────────────────────────────────────────
-const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit, onAddComment, onDeleteComment }) => {
+const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit, onAddComment, onDeleteComment, searchQ = "" }) => {
   const [expanded,    setExpanded]   = useState(false);
+  const sparkHits = searchQ ? batch.ads.filter(a => a.sparkCode && normSearch(a.sparkCode).includes(searchQ)).map(a => a.id) : [];
+  // Open the card when the search hits one of its spark codes, so the match is visible
+  useEffect(() => { if (sparkHits.length) setExpanded(true); }, [searchQ]); // eslint-disable-line react-hooks/exhaustive-deps
   const [issueModal,  setIssueModal] = useState(null);
   const { isComplete } = getBatchState(batch);
   const submittedDate  = new Date(batch.submittedDate);
@@ -283,10 +293,10 @@ const BatchCard = ({ batch, onUpdateAd, onDelete, onEdit, onAddComment, onDelete
                     <CopyCodesBtn ads={batch.ads} />
                   </div>
                   {batch.ads.filter(a => a.sparkCode).map(a => (
-                    <div key={a.id} style={{ display:"flex", gap:10, alignItems:"center", marginBottom:4 }}>
+                    <div key={a.id} style={{ display:"flex", gap:10, alignItems:"center", marginBottom:4, ...(sparkHits.includes(a.id) ? { background:T.orange+"22", borderRadius:6, margin:"0 -6px 4px", padding:"2px 6px" } : {}) }}>
                       <span style={{ fontSize:11, color:T.textTert, fontFamily:"ui-monospace,monospace", flexShrink:0, minWidth:44 }}>{a.adId}</span>
                       <span style={{ fontSize:12, color:T.textSec, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.name}</span>
-                      <span style={{ fontSize:12, color:T.text, fontFamily:"ui-monospace,monospace", background:T.bg, borderRadius:6, padding:"2px 8px", flexShrink:0 }}>{a.sparkCode}</span>
+                      <span style={{ fontSize:12, color:T.text, fontFamily:"ui-monospace,monospace", background:T.bg, borderRadius:6, padding:"2px 8px", minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"55%" }} title={a.sparkCode}>{a.sparkCode}</span>
                     </div>
                   ))}
                 </div>
@@ -770,12 +780,14 @@ export default function AdTracker() {
   const cainteCount  = batches.reduce((s,b)=>s+b.ads.filter(a=>a.status==="issue"&&a.assignedTo==="CAINTE").length, 0);
   const pdmCount     = batches.reduce((s,b)=>s+b.ads.filter(a=>a.status==="issue"&&a.assignedTo==="PDM").length,    0);
 
+  const searchQ = normSearch(search);
   const filtered = batches.filter(b => {
     if (filterPlatform!=="All" && b.platform!==filterPlatform) return false;
     if (filterState==="Issues"     && !b.ads.some(a=>a.status==="issue")) return false;
     if (filterState==="Complete"   && !getBatchState(b).isComplete)       return false;
     if (filterState==="InProgress" && getBatchState(b).isComplete)        return false;
-    if (search && !b.name.toLowerCase().includes(search.toLowerCase()))   return false;
+    if (searchQ && !normSearch(b.name).includes(searchQ) && !normSearch(b.creatorHandle).includes(searchQ)
+        && !b.ads.some(a => adMatchesSearch(a, searchQ))) return false;
     return true;
   });
 
@@ -827,8 +839,8 @@ export default function AdTracker() {
                 <div style={{ width:1,height:20,background:T.border,flexShrink:0,marginLeft:4 }} />
                 <div style={{ position:"relative",flexShrink:0 }}>
                   <span style={{ position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",fontSize:13,color:T.textTert,pointerEvents:"none" }}>🔍</span>
-                  <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…"
-                    style={{ background:T.inputBg,border:"none",borderRadius:12,padding:"8px 14px 8px 32px",color:T.text,fontSize:13,width:170,outline:"none",fontFamily:"inherit" }} />
+                  <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or spark code…"
+                    style={{ background:T.inputBg,border:"none",borderRadius:12,padding:"8px 14px 8px 32px",color:T.text,fontSize:13,width:220,outline:"none",fontFamily:"inherit" }} />
                 </div>
                 <div style={{ width:1,height:20,background:T.border,flexShrink:0 }} />
                 {[["All","All"],["InProgress","In Progress"],["Issues","Needs Action"],["Complete","Complete"]].map(([key,label])=>{
@@ -862,7 +874,7 @@ export default function AdTracker() {
                 };
                 return rank(a) - rank(b);
               }).map(batch=>(
-                <BatchCard key={batch.id} batch={batch} onUpdateAd={handleUpdateAd} onDelete={handleDelete} onEdit={handleEdit} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} />
+                <BatchCard key={batch.id} batch={batch} onUpdateAd={handleUpdateAd} onDelete={handleDelete} onEdit={handleEdit} onAddComment={handleAddComment} onDeleteComment={handleDeleteComment} searchQ={searchQ} />
               ))}
             </div>
           )}
