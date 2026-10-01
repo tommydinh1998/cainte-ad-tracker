@@ -486,6 +486,8 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
     notes: editBatch?.notes||"",
     submittedBy: editBatch?.submittedBy||"",
     creatorHandle: editBatch?.creatorHandle||"",
+    // Partnership ad: Ja (true) / Nej (false); intet forvalgt. Ældre batches har null og skal vælges ved redigering.
+    partnershipAd: typeof editBatch?.partnershipAd === "boolean" ? editBatch.partnershipAd : null,
   });
 
   // Each ad row: { name, sparkCode }
@@ -506,6 +508,7 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
     const e = {};
     if (!isBoosting(form.platform) && !form.name.trim()) e.name = "Batch name is required";
     if (!isBoosting(form.platform) && !form.creatorHandle.trim()) e.creatorHandle = "Creator / profile handle is required";
+    if (form.platform === "Meta" && typeof form.partnershipAd !== "boolean") e.partnershipAd = "Choose whether this is a partnership ad";
     if (!isTikTok(form.platform) && !form.link.trim()) e.link = `${isBoosting(form.platform) ? "Post" : "Google Sheet / Drive"} link is required`;
     if (isTikTok(form.platform) && adRows.every(r => !r.sparkCode.trim())) e.sparkCode = "At least one spark code is required";
     setErrors(e);
@@ -531,7 +534,7 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
       });
     }
 
-    const batchData = { ...form, name, totalAds: ads.length, ads };
+    const batchData = { ...form, name, totalAds: ads.length, ads, partnershipAd: form.platform === "Meta" ? form.partnershipAd : null };
 
     if (isEdit) {
       onSave({ ...editBatch, ...batchData });
@@ -568,6 +571,18 @@ const SubmitModal = ({ onClose, onAdd, onSave, editBatch }) => {
         {/* ── Step 2: Batch info ── */}
         {!isBoosting(form.platform) && (
           <Field label="Batch Name" value={form.name} onChange={v=>{set("name",v); if(v.trim()) setErrors(e=>({...e,name:null}));}} placeholder="e.g. June Partnership Ads" required error={errors.name} />
+        )}
+        {form.platform === "Meta" && (
+          <div style={{ marginBottom:18 }}>
+            <div style={{ fontSize:13,fontWeight:600,color:T.textSec,marginBottom:10 }}>Partnership ad <span style={{ color:T.red }}>*</span></div>
+            <div style={{ display:"flex",gap:10 }}>
+              {[[true,"Ja"],[false,"Nej"]].map(([v,label])=>{
+                const active = form.partnershipAd === v;
+                return <button key={label} type="button" onClick={()=>{set("partnershipAd",v); setErrors(e=>({...e,partnershipAd:null}));}} style={{ flex:1,padding:"11px 0",borderRadius:12,border:"none",cursor:"pointer",fontSize:15,fontWeight:600,background:active?T.text:T.bg,color:active?"#fff":T.textSec }}>{label}</button>;
+              })}
+            </div>
+            {errors.partnershipAd && <div style={{ fontSize:12,color:T.red,marginTop:6 }}>{errors.partnershipAd}</div>}
+          </div>
         )}
         {!isBoosting(form.platform) && (
           <Field label="Creator / Profile Handle" value={form.creatorHandle} onChange={v=>{set("creatorHandle",v); if(v.trim()) setErrors(e=>({...e,creatorHandle:null}));}} placeholder="@handle" required error={errors.creatorHandle} />
@@ -759,6 +774,7 @@ export default function AdTracker() {
       body: JSON.stringify(batch)
     });
     const saved = await res.json();
+    if (!res.ok) { alert(saved.error || "Could not save the batch"); return; }
     setBatches(prev => [saved, ...prev]);
   };
 
@@ -771,6 +787,7 @@ export default function AdTracker() {
       body: JSON.stringify(updated)
     });
     const result = await res.json();
+    if (!res.ok) { alert(result.error || "Could not save the batch"); return; }
     setBatches(prev => prev.map(b => b.id!==updated.id ? b : { ...updated, ads: result.ads || updated.ads }));
   };
 

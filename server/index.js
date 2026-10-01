@@ -230,6 +230,9 @@ async function initDB() {
   // a globally-unique id needs no scoping. Existing rows are all Cainté.
   await pool.query(`
     ALTER TABLE batches        ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
+    -- Partnership ad (Ja/Nej) på Meta-batches. Bevidst UDEN default: eksisterende rækker beholder NULL
+    -- (= ikke valgt), så Ads Launcher falder tilbage på batchnavnet for dem.
+    ALTER TABLE batches        ADD COLUMN IF NOT EXISTS partnership_ad BOOLEAN;
     ALTER TABLE creators       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
     ALTER TABLE sourcing       ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
     ALTER TABLE ct_collections ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT 'cainte';
@@ -319,6 +322,7 @@ const mapBatch = (b, ads, comments = []) => ({
   submittedBy:   b.submitted_by,
   creatorHandle: b.creator_handle,
   submittedDate: b.submitted_date,
+  partnershipAd: b.partnership_ad,
   ads:           ads.filter(a => a.batch_id === b.id).map(a => mapAd(a, comments)),
 });
 
@@ -344,14 +348,21 @@ app.get('/api/batches', async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
+// Partnership ad: et påkrævet Ja/Nej på Meta-batches (true/false); NULL på alle andre platforme.
+const partnershipFor = (platform, v) => platform === 'Meta'
+  ? (typeof v === 'boolean' ? { value: v } : { error: 'Vælg om det er en partnership ad (Ja eller Nej).' })
+  : { value: null };
+
 app.post('/api/batches', async (req, res) => {
   const { name, platform, link, notes, submittedBy, creatorHandle, ads } = req.body;
+  const pa = partnershipFor(platform, req.body.partnershipAd);
+  if (pa.error) return res.status(400).json({ error: pa.error });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const bRes = await client.query(
-      `INSERT INTO batches (name,platform,link,notes,submitted_by,creator_handle,brand) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [name, platform, link||'', notes||'', submittedBy||'', creatorHandle||'', brandOf(req)]
+      `INSERT INTO batches (name,platform,link,notes,submitted_by,creator_handle,brand,partnership_ad) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [name, platform, link||'', notes||'', submittedBy||'', creatorHandle||'', brandOf(req), pa.value]
     );
     const batch = bRes.rows[0];
     const insertedAds = [];
@@ -370,7 +381,7 @@ app.post('/api/batches', async (req, res) => {
     res.json({
       id: batch.id, name: batch.name, platform: batch.platform,
       link: batch.link, notes: batch.notes, submittedBy: batch.submitted_by,
-      creatorHandle: batch.creator_handle, submittedDate: batch.submitted_date,
+      creatorHandle: batch.creator_handle, submittedDate: batch.submitted_date, partnershipAd: batch.partnership_ad,
       ads: insertedAds
     });
   } catch (e) {
@@ -381,12 +392,19 @@ app.post('/api/batches', async (req, res) => {
 
 app.put('/api/batches/:id', async (req, res) => {
   const { name, platform, link, notes, submittedBy, creatorHandle, ads } = req.body;
+  const pa = partnershipFor(platform, req.body.partnershipAd);
+  if (pa.error) return res.status(400).json({ error: pa.error });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      `UPDATE batches SET name=$1,platform=$2,link=$3,notes=$4,submitted_by=$5,creator_handle=$6 WHERE id=$7`,
-      [name, platform, link||'', notes||'', submittedBy||'', creatorHandle||'', req.params.id]
+      // Meta: COALESCE beholder en sat værdi, hvis en anden skrivevej ikke sender feltet. Andre platforme: altid NULL.
+      platform === 'Meta'
+        ? `UPDATE batches SET name=$1,platform=$2,link=$3,notes=$4,submitted_by=$5,creator_handle=$6,partnership_ad=COALESCE($8::boolean, partnership_ad) WHERE id=$7`
+        : `UPDATE batches SET name=$1,platform=$2,link=$3,notes=$4,submitted_by=$5,creator_handle=$6,partnership_ad=NULL WHERE id=$7`,
+      platform === 'Meta'
+        ? [name, platform, link||'', notes||'', submittedBy||'', creatorHandle||'', req.params.id, pa.value]
+        : [name, platform, link||'', notes||'', submittedBy||'', creatorHandle||'', req.params.id]
     );
     await client.query('DELETE FROM ads WHERE batch_id=$1', [req.params.id]);
     const updatedRows = [];
