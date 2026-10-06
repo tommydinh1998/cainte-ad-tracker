@@ -243,6 +243,23 @@ async function initDB() {
     CREATE INDEX IF NOT EXISTS ct_collections_brand_idx ON ct_collections (brand);
     CREATE INDEX IF NOT EXISTS ct_ideas_brand_idx       ON ct_ideas (brand);
   `);
+  // Influencer ROI: Jana's manual sums of fee + ad spend vs. what the ad earned.
+  // Brand-scoped root table; the creator link is optional and survives deletion as NULL.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS roi_calcs (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      title TEXT DEFAULT '',
+      creator_id INTEGER REFERENCES creators(id) ON DELETE SET NULL,
+      calc_date TEXT DEFAULT '',
+      fee NUMERIC DEFAULT 0,
+      ad_spend NUMERIC DEFAULT 0,
+      revenue NUMERIC DEFAULT 0,
+      note TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS roi_calcs_brand_idx ON roi_calcs (brand);
+  `);
   // The budget setting becomes one row per brand (id 1 = cainte, id 2 = elle).
   await pool.query(`
     ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS brand TEXT;
@@ -859,6 +876,48 @@ app.put('/api/sourcing/:id', async (req, res) => {
 app.delete('/api/sourcing/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM sourcing WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Influencer ROI (manual calculations) ────────────────────────────
+const mapRoi = (r) => ({
+  id: r.id, title: r.title || '', creatorId: r.creator_id, date: r.calc_date || '',
+  fee: Number(r.fee) || 0, adSpend: Number(r.ad_spend) || 0, revenue: Number(r.revenue) || 0,
+  note: r.note || '', createdAt: r.created_at,
+});
+const roiValues = (b) => [b.title || '', b.creatorId || null, b.date || '', Number(b.fee) || 0, Number(b.adSpend) || 0, Number(b.revenue) || 0, b.note || ''];
+
+app.get('/api/roi', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT * FROM roi_calcs WHERE brand=$1 ORDER BY calc_date DESC, created_at DESC', [brandOf(req)]);
+    res.json(r.rows.map(mapRoi));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/roi', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `INSERT INTO roi_calcs (title,creator_id,calc_date,fee,ad_spend,revenue,note,brand) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [...roiValues(req.body), brandOf(req)]
+    );
+    res.json(mapRoi(r.rows[0]));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/roi/:id', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `UPDATE roi_calcs SET title=$1, creator_id=$2, calc_date=$3, fee=$4, ad_spend=$5, revenue=$6, note=$7 WHERE id=$8 RETURNING *`,
+      [...roiValues(req.body), req.params.id]
+    );
+    res.json(mapRoi(r.rows[0]));
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/roi/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM roi_calcs WHERE id=$1', [req.params.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -548,6 +548,92 @@ const SourcingModal = ({ editEntry, onClose, onSave }) => {
   );
 };
 
+// ── ROI calculation (fee + ad spend vs. revenue, all typed in by hand) ───────
+const roiCalc = (r) => {
+  const fee = Number(r.fee) || 0, adSpend = Number(r.adSpend) || 0, revenue = Number(r.revenue) || 0;
+  const cost = fee + adSpend;
+  return { fee, adSpend, revenue, cost, profit: revenue - cost, roas: cost > 0 ? revenue / cost : null, adRoas: adSpend > 0 ? revenue / adSpend : null };
+};
+const fmtRoas = (x) => x == null ? "–" : `${x.toLocaleString("da-DK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`;
+
+const RoiModal = ({ editEntry, creators, onClose, onSave }) => {
+  const isEdit = !!editEntry;
+  const [form, setForm] = useState({
+    title: editEntry?.title || "", creatorId: editEntry?.creatorId || "", date: editEntry?.date || isoDate(today),
+    fee: editEntry?.fee || "", adSpend: editEntry?.adSpend || "", revenue: editEntry?.revenue || "", note: editEntry?.note || "",
+  });
+  const [errTitle, setErrTitle] = useState(false);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const calc = roiCalc(form);
+
+  const submit = () => {
+    if (!form.title.trim() && !form.creatorId) { setErrTitle(true); return; }
+    const data = { ...form, creatorId: form.creatorId ? Number(form.creatorId) : null };
+    onSave(isEdit ? { ...data, id: editEntry.id } : data);
+    onClose();
+  };
+
+  const money = (k, label) => (
+    <div style={{ flex: "1 1 140px" }}>
+      <FormLabel>{label}</FormLabel>
+      <div style={{ position: "relative" }}>
+        <input type="number" min="0" value={form[k]} onChange={e => set(k, e.target.value)} placeholder="0" style={{ ...smallInput, paddingRight: 40 }} {...focusBlue} />
+        <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: T.textTert }}>kr</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={overlay}>
+      <div style={{ ...cardStyle, maxWidth: 520 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4 }}>
+          <div style={{ fontSize: 24, fontWeight: 700, color: T.text, letterSpacing: "-0.025em" }}>{isEdit ? "Edit Calculation" : "New Calculation"}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: T.textTert, cursor: "pointer", padding: "2px 6px", lineHeight: 1 }}>✕</button>
+        </div>
+        <div style={{ fontSize: 14, color: T.textSec, marginBottom: 22 }}>Fee + ad spend vs. what the ad earned.</div>
+
+        <Field label="Name" value={form.title} onChange={v => { set("title", v); if (v.trim()) setErrTitle(false); }} placeholder="e.g. Summer reel ad" error={errTitle ? "Add a name or pick an influencer" : null} />
+
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+          <div style={{ flex: "2 1 200px" }}>
+            <FormLabel>Influencer</FormLabel>
+            <select value={form.creatorId} onChange={e => { set("creatorId", e.target.value); if (e.target.value) setErrTitle(false); }} style={{ ...smallInput, cursor: "pointer" }}>
+              <option value="">None</option>
+              {[...creators].sort((a, b) => a.name.localeCompare(b.name)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: "1 1 140px" }}>
+            <FormLabel>Date</FormLabel>
+            <input type="date" value={form.date} onChange={e => set("date", e.target.value)} style={smallInput} {...focusBlue} />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+          {money("fee", "Fee (honorar)")}
+          {money("adSpend", "Ad spend")}
+          {money("revenue", "Revenue from ad")}
+        </div>
+
+        <div style={{ background: T.bg, borderRadius: 12, padding: "14px 16px", marginBottom: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+          <div><div style={{ fontSize: 12, color: T.textSec }}>Total cost</div><div style={{ fontSize: 17, fontWeight: 700, color: T.text }}>{kr(calc.cost)}</div></div>
+          <div><div style={{ fontSize: 12, color: T.textSec }}>Result</div><div style={{ fontSize: 17, fontWeight: 700, color: calc.profit < 0 ? T.red : T.green }}>{kr(calc.profit)}</div></div>
+          <div><div style={{ fontSize: 12, color: T.textSec }}>ROAS</div><div style={{ fontSize: 17, fontWeight: 700, color: T.text }}>{fmtRoas(calc.roas)}</div></div>
+        </div>
+
+        <div style={{ marginBottom: 18 }}>
+          <FormLabel>Note</FormLabel>
+          <textarea value={form.note} onChange={e => set("note", e.target.value)} rows={2} placeholder="e.g. Spark ad, ran 14 days" style={textareaStyle} {...focusBlue} />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "15px 0", background: T.bg, border: "none", borderRadius: 13, color: T.text, fontSize: 16, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+          <button onClick={submit} style={{ flex: 2, padding: "15px 0", background: T.blue, border: "none", borderRadius: 13, color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", boxShadow: `0 4px 18px ${T.blue}40` }}>{isEdit ? "Save Changes" : "Save Calculation"}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ── Inline status switcher ────────────────────────────────────────────────────
 const StatusSwitch = ({ status, onChange }) => (
   <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
@@ -945,6 +1031,8 @@ export default function InfluencerTracker() {
   const [sourcingModal, setSourcingModal] = useState(null); // { editEntry? } | null
   const [showSourcingModal, setShowSourcingModal] = useState(false);
   const [contentModal, setContentModal] = useState(null);   // { creator, collab } — quick content logging
+  const [roiCalcs, setRoiCalcs] = useState([]);
+  const [roiModal, setRoiModal] = useState(null);           // { editEntry? } | null
 
   // content tab
   const [contentYear, setContentYear] = useState(today.getFullYear());
@@ -969,7 +1057,8 @@ export default function InfluencerTracker() {
       api("/api/creators").then(r => r.json()),
       api("/api/sourcing").then(r => r.json()),
       api("/api/settings").then(r => r.json()),
-    ]).then(([cr, so, st]) => { setCreators(cr); setSourcing(so); setMonthlyBudget(st.monthlyBudget || 0); setLoading(false); })
+      api("/api/roi").then(r => r.json()).catch(() => []),
+    ]).then(([cr, so, st, roi]) => { setCreators(cr); setSourcing(so); setMonthlyBudget(st.monthlyBudget || 0); setRoiCalcs(Array.isArray(roi) ? roi : []); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
@@ -1072,6 +1161,22 @@ export default function InfluencerTracker() {
   const handleDeleteSourcing = async (id) => {
     setSourcing(prev => prev.filter(s => s.id !== id));
     await api(`/api/sourcing/${id}`, { method: "DELETE" });
+  };
+
+  // ── ROI handlers ──
+  const handleSaveRoi = async (entry) => {
+    const opts = { headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) };
+    const res = entry.id
+      ? await api(`/api/roi/${entry.id}`, { method: "PUT", ...opts })
+      : await api("/api/roi", { method: "POST", ...opts });
+    const saved = await res.json();
+    setRoiCalcs(prev => (entry.id ? prev.map(r => r.id !== saved.id ? r : saved) : [saved, ...prev])
+      .sort((a, b) => (b.date || "").localeCompare(a.date || "")));
+  };
+  const handleDeleteRoi = async (id) => {
+    if (!window.confirm("Delete this calculation?")) return;
+    setRoiCalcs(prev => prev.filter(r => r.id !== id));
+    await api(`/api/roi/${id}`, { method: "DELETE" });
   };
 
   // modal openers wired to CollabCard signatures
@@ -1260,6 +1365,7 @@ export default function InfluencerTracker() {
             <TabBtn tab="content" label="Content" />
             <TabBtn tab="influencers" label="Influencers" />
             <TabBtn tab="sourcing" label="Sourcing" />
+            <TabBtn tab="roi" label="ROI" />
           </div>
         </div>
       </div>
@@ -1669,6 +1775,66 @@ export default function InfluencerTracker() {
             )}
           </>
         )}
+
+        {/* ── ROI ── */}
+        {activeTab === "roi" && (() => {
+          const totals = roiCalc(roiCalcs.reduce((t, r) => ({ fee: t.fee + (Number(r.fee) || 0), adSpend: t.adSpend + (Number(r.adSpend) || 0), revenue: t.revenue + (Number(r.revenue) || 0) }), { fee: 0, adSpend: 0, revenue: 0 }));
+          const creatorName = (id) => creators.find(c => c.id === id)?.name;
+          return (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 13, color: T.textSec }}>Fee + ad spend vs. what the ad earned. Everything is typed in by hand.</div>
+                <button onClick={() => setRoiModal({})}
+                  style={{ background: T.blue + "18", border: "none", borderRadius: 99, color: T.blue, fontSize: 13, fontWeight: 600, padding: "8px 16px", cursor: "pointer" }}>+ New Calculation</button>
+              </div>
+
+              {roiCalcs.length > 0 && (
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+                  <StatCard label="Total cost (fee + ads)" value={kr(totals.cost)} />
+                  <StatCard label="Revenue from ads" value={kr(totals.revenue)} />
+                  <StatCard label="Result" value={kr(totals.profit)} color={totals.profit < 0 ? T.red : T.green} />
+                  <StatCard label="ROAS (revenue ÷ total cost)" value={fmtRoas(totals.roas)} />
+                </div>
+              )}
+
+              {roiCalcs.length === 0 ? (
+                <div style={{ textAlign: "center", color: T.textSec, fontSize: 16, padding: "70px 0" }}>No calculations yet.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {roiCalcs.map(r => {
+                    const c = roiCalc(r);
+                    const name = creatorName(r.creatorId);
+                    return (
+                      <div key={r.id} style={{ background: T.card, borderRadius: 14, border: `1px solid ${T.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "14px 16px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 15, fontWeight: 700, color: T.text, letterSpacing: "-0.01em" }}>{r.title || name}</span>
+                          {name && r.title && <Chip color={T.purple}>{name}</Chip>}
+                          {r.date && <span style={{ fontSize: 12, color: T.textTert }}>{new Date(`${r.date}T00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>}
+                          <div style={{ marginLeft: "auto", display: "flex", gap: 2 }}>
+                            <IconBtn onClick={() => setRoiModal({ editEntry: r })} title="Edit" emoji="✏️" />
+                            <IconBtn onClick={() => handleDeleteRoi(r.id)} title="Delete" emoji="🗑" />
+                          </div>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10, marginTop: 10 }}>
+                          {[
+                            ["Fee", kr(c.fee)], ["Ad spend", kr(c.adSpend)], ["Total cost", kr(c.cost)],
+                            ["Revenue", kr(c.revenue)], ["Result", kr(c.profit), c.profit < 0 ? T.red : T.green], ["ROAS", fmtRoas(c.roas)],
+                          ].map(([label, val, color]) => (
+                            <div key={label}>
+                              <div style={{ fontSize: 11, color: T.textSec }}>{label}</div>
+                              <div style={{ fontSize: 14, fontWeight: 600, color: color || T.text }}>{val}</div>
+                            </div>
+                          ))}
+                        </div>
+                        {r.note && <div style={{ fontSize: 13, color: T.text, lineHeight: 1.5, marginTop: 8 }}>{r.note}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {loading && (
@@ -1702,6 +1868,14 @@ export default function InfluencerTracker() {
           editEntry={sourcingModal?.editEntry}
           onClose={() => { setShowSourcingModal(false); setSourcingModal(null); }}
           onSave={handleSaveSourcing}
+        />
+      )}
+      {roiModal && (
+        <RoiModal
+          editEntry={roiModal.editEntry}
+          creators={creators}
+          onClose={() => setRoiModal(null)}
+          onSave={handleSaveRoi}
         />
       )}
       {profileCreator && (
