@@ -2454,6 +2454,50 @@ app.post('/api/mwb/ideas/:id/promote', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Swap in a new focus battle when plans change. Body:
+//   { in_battle_id | in_idea_id, out_id?, out_status? }
+// The incoming battle (or an idea, promoted on the fly) becomes active and
+// takes the outgoing battle's place in the ranking; the outgoing one moves to
+// out_status (next/paused/won/dropped). out_id may be omitted while there's room.
+app.post('/api/mwb/swap', async (req, res) => {
+  const brand = brandOf(req);
+  const b = req.body || {};
+  const outStatus = ['next', 'paused', 'won', 'dropped'].includes(b.out_status) ? b.out_status : 'next';
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let inId = Number(b.in_battle_id) || null;
+    if (!inId && b.in_idea_id) {
+      const idea = (await client.query('SELECT * FROM mwb_ideas WHERE id=$1 AND brand=$2', [b.in_idea_id, brand])).rows[0];
+      if (!idea) throw Object.assign(new Error('Idea not found'), { code: 404 });
+      inId = (await client.query(
+        `INSERT INTO mwb_battles (brand, title, why, owner, status, rank, idea_id)
+         VALUES ($1,$2,$3,$4,'next',(SELECT COALESCE(MAX(rank),0)+1 FROM mwb_battles WHERE brand=$1),$5) RETURNING id`,
+        [brand, idea.title, idea.description, idea.submitted_by, idea.id])).rows[0].id;
+      await client.query(`UPDATE mwb_ideas SET status='promoted', battle_id=$1 WHERE id=$2`, [inId, idea.id]);
+    }
+    const inB = (await client.query('SELECT * FROM mwb_battles WHERE id=$1 AND brand=$2', [inId, brand])).rows[0];
+    if (!inB) throw Object.assign(new Error('Battle not found'), { code: 404 });
+    let rank = inB.rank;
+    if (b.out_id) {
+      const outB = (await client.query(`SELECT * FROM mwb_battles WHERE id=$1 AND brand=$2 AND status='active'`, [b.out_id, brand])).rows[0];
+      if (!outB) throw Object.assign(new Error('Battle to replace not found'), { code: 404 });
+      rank = outB.rank;
+      await client.query(
+        `UPDATE mwb_battles SET status=$1, rank=(SELECT COALESCE(MAX(rank),0)+1 FROM mwb_battles WHERE brand=$2), updated_at=NOW() WHERE id=$3`,
+        [outStatus, brand, outB.id]);
+    }
+    const n = (await client.query(`SELECT COUNT(*)::int AS n FROM mwb_battles WHERE brand=$1 AND status='active' AND id<>$2`, [brand, inId])).rows[0].n;
+    if (n >= MWB_MAX_ACTIVE) throw Object.assign(new Error(mwbLimitErr.error), { code: 400 });
+    await client.query(`UPDATE mwb_battles SET status='active', rank=$1, updated_at=NOW() WHERE id=$2`, [rank, inId]);
+    await client.query('COMMIT');
+    res.json({ success: true, battle_id: inId });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(e.code || 500).json({ error: e.message });
+  } finally { client.release(); }
+});
+
 app.delete('/api/mwb/ideas/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM mwb_ideas WHERE id=$1 AND brand=$2', [req.params.id, brandOf(req)]);

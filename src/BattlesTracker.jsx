@@ -71,6 +71,7 @@ const mwbApi = {
   removeIdea: (id) => api(`/api/mwb/ideas/${id}`, { method: "DELETE" }),
   vote: (id, delta) => j(api(`/api/mwb/ideas/${id}/vote`, jreq("POST", { delta }))),
   promote: (id) => j(api(`/api/mwb/ideas/${id}/promote`, { method: "POST" })),
+  swap: (b) => j(api("/api/mwb/swap", jreq("POST", b))),
 };
 
 // ── Shared styles (mirrors the other trackers) ───────────────────────────────
@@ -288,6 +289,84 @@ function IdeaModal({ initial, owners, onSubmit, onDelete, onClose }) {
   );
 }
 
+// ── Swap modal (plans change: bring something into focus, move something out) ─
+// Either `incoming` is fixed ({ kind: "battle" | "idea", item }) and the user
+// picks which active battle makes room, or `outgoing` (an active battle) is
+// fixed and the user picks what replaces it from Up next, Paused or the ideas.
+const OUT_STATUSES = ["next", "paused", "won", "dropped"];
+function SwapModal({ incoming, outgoing, active, candidates, full, onSwap, onQueue, onClose }) {
+  const [pick, setPick] = useState(null); // battle id (out) or candidate key (in)
+  const [outStatus, setOutStatus] = useState("next");
+  const [busy, setBusy] = useState(false);
+  const pickingOut = !!incoming;
+  const needsOut = pickingOut && full;
+  const ready = pickingOut ? (!needsOut || pick) : !!pick;
+  const showOutStatus = pickingOut ? !!pick : true;
+
+  const submit = async () => {
+    if (!ready || busy) return;
+    setBusy(true);
+    try {
+      const inSide = pickingOut ? { kind: incoming.kind, id: incoming.item.id } : { kind: pick.split(":")[0], id: Number(pick.split(":")[1]) };
+      await onSwap({
+        ...(inSide.kind === "idea" ? { in_idea_id: inSide.id } : { in_battle_id: inSide.id }),
+        out_id: pickingOut ? pick : outgoing.id,
+        out_status: outStatus,
+      });
+    } finally { setBusy(false); }
+  };
+
+  const option = (key, selected, title, sub, badge) => (
+    <button key={key} type="button" onClick={() => setPick(selected ? null : key)}
+      style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left", padding: "12px 14px", borderRadius: 12, marginBottom: 8, cursor: "pointer", border: `1.5px solid ${selected ? T.blue : "transparent"}`, background: selected ? T.blue + "10" : T.bg, fontFamily: "inherit" }}>
+      <span style={{ width: 18, height: 18, borderRadius: 99, flexShrink: 0, border: `2px solid ${selected ? T.blue : "rgba(60,60,67,0.25)"}`, background: selected ? T.blue : "transparent", boxShadow: selected ? "inset 0 0 0 3px #fff" : "none" }} />
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: T.text }}>{title}</span>
+        {sub && <span style={{ display: "block", fontSize: 12, color: T.textSec, marginTop: 2 }}>{sub}</span>}
+      </span>
+      {badge}
+    </button>
+  );
+
+  const name = pickingOut ? incoming.item.title : outgoing.title;
+  return (
+    <Modal title={pickingOut ? "Bring into focus" : "Swap out battle"} onClose={onClose}>
+      <div style={{ fontSize: 14, color: T.textSec, marginBottom: 18, lineHeight: 1.5 }}>
+        {pickingOut
+          ? <><b style={{ color: T.text }}>{name}</b> becomes an active battle. {full ? `Focus is full (${MAX_ACTIVE}/${MAX_ACTIVE}), so pick the one it replaces.` : "There's room, so you can add it directly or still swap one out."}</>
+          : <>Pick what replaces <b style={{ color: T.text }}>{name}</b>. It takes the same spot in the priority order.</>}
+      </div>
+
+      <FormLabel>{pickingOut ? (full ? "Replace" : "Replace (optional)") : "Replace with"}</FormLabel>
+      {pickingOut
+        ? active.map((b, i) => option(b.id, pick === b.id, `#${i + 1} ${b.title}`, b.owner ? `👤 ${b.owner}` : null))
+        : candidates.length === 0
+          ? <div style={{ fontSize: 14, color: T.textTert, marginBottom: 12 }}>Nothing in Up next, Paused or the idea catalog yet.</div>
+          : candidates.map((c) => option(c.key, pick === c.key, c.title, c.sub,
+              <Chip color={c.kind === "idea" ? T.teal : STATUS[c.status]?.color || GRAY}>{c.kind === "idea" ? "Idea" : STATUS[c.status]?.label}</Chip>))}
+
+      {showOutStatus && (
+        <div style={{ margin: "14px 0 6px" }}>
+          <FormLabel>What happens to {pickingOut ? "the replaced battle" : <b>{name}</b>}?</FormLabel>
+          <Segmented options={OUT_STATUSES.map((k) => [k, STATUS[k]])} value={outStatus} onChange={setOutStatus} />
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
+        {onQueue && (
+          <button onClick={onQueue} style={{ padding: "14px 16px", borderRadius: 14, border: "none", cursor: "pointer", fontSize: 14, fontWeight: 600, background: T.pillBg, color: T.textSec }}>
+            Just add to Up next
+          </button>
+        )}
+        <button onClick={submit} disabled={!ready || busy}
+          style={{ flex: 1, padding: "14px 0", borderRadius: 14, border: "none", cursor: ready ? "pointer" : "default", fontSize: 15, fontWeight: 700, background: ready ? T.blue : T.pillBg, color: ready ? "#fff" : T.textTert, boxShadow: ready ? `0 4px 18px ${T.blue}40` : "none" }}>
+          {busy ? "Saving…" : pickingOut && !pick ? "Make it active" : "⇄ Swap"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Steps (the concrete work under a battle) ─────────────────────────────────
 function StepRow({ step, onToggle, onRemove }) {
   const late = !step.done && step.deadline && daysUntil(step.deadline) < 0;
@@ -374,6 +453,7 @@ export default function BattlesTracker() {
   const [battleModal, setBattleModal] = useState(null); // null | {} | battle
   const [ideaModal, setIdeaModal] = useState(null);     // null | {} | idea
   const [showArchive, setShowArchive] = useState(false);
+  const [swap, setSwap] = useState(null); // null | { incoming } | { outgoing }
   const [ideaFilter, setIdeaFilter] = useState("open");  // open | parked | promoted | all
   const [ideaCat, setIdeaCat] = useState("");
   const [ideaSort, setIdeaSort] = useState("score");
@@ -474,11 +554,21 @@ export default function BattlesTracker() {
     setData((d) => ({ ...d, ideas: d.ideas.map((x) => (x.id === i.id ? { ...x, votes: x.votes + 1 } : x)) }));
     await mwbApi.vote(i.id, 1);
   };
-  const promote = async (i) => {
-    if (!confirm(`Promote "${i.title}" to a Must Win Battle? It lands in "Up next".`)) return;
-    await mwbApi.promote(i.id);
+  const promote = (i) => setSwap({ incoming: { kind: "idea", item: i } });
+  const queueIdea = async (i) => { await mwbApi.promote(i.id); setSwap(null); reload(); };
+  const doSwap = async (body) => {
+    try { await mwbApi.swap(body); } catch (e) { alert(e.message); return; }
+    setSwap(null);
     reload();
   };
+  // Candidates that can replace an active battle.
+  const swapCandidates = [
+    ...data.battles.filter((b) => b.status === "next" || b.status === "paused")
+      .map((b) => ({ key: `battle:${b.id}`, kind: "battle", status: b.status, title: b.title, sub: b.owner ? `👤 ${b.owner}` : null })),
+    ...data.ideas.filter((i) => i.status === "new" || i.status === "considering")
+      .sort((a, b) => ideaScore(b) - ideaScore(a))
+      .map((i) => ({ key: `idea:${i.id}`, kind: "idea", title: i.title, sub: `Score ${ideaScore(i)} · 👍 ${i.votes}${i.submitted_by ? ` · ${i.submitted_by}` : ""}` })),
+  ];
 
   // ── Pieces ─────────────────────────────────────────────────────────────────
   const stat = (label, value, color, sub) => (
@@ -540,7 +630,11 @@ export default function BattlesTracker() {
             <AddStep owners={owners} onAdd={(form) => addStep(b.id, form)} />
           </div>
         </div>
-        <ArrowBtns list={active} idx={idx} />
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+          <ArrowBtns list={active} idx={idx} />
+          <button onClick={() => setSwap({ outgoing: b })} title="Swap this battle for something from Up next or the idea catalog"
+            style={{ ...ghostBtn, padding: "5px 9px" }}>⇄</button>
+        </div>
       </div>
     );
   };
@@ -572,7 +666,7 @@ export default function BattlesTracker() {
         </div>
       )}
       {activeFull && (
-        <div style={{ fontSize: 13, color: T.textSec, marginTop: 10 }}>Focus is full ({MAX_ACTIVE}/{MAX_ACTIVE}). New battles go to "Up next" until one is won, paused or dropped.</div>
+        <div style={{ fontSize: 13, color: T.textSec, marginTop: 10 }}>Focus is full ({MAX_ACTIVE}/{MAX_ACTIVE}). Plans changed? Use ⇄ on a battle to swap it for something from Up next or the idea catalog.</div>
       )}
 
       <div style={sectionTitle}>⏭ Up next</div>
@@ -587,9 +681,9 @@ export default function BattlesTracker() {
                 {b.why && <div style={{ fontSize: 13, color: T.textSec, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.why}</div>}
               </div>
               {b.owner && <Chip color={T.textSec} bg={T.pillBg}>{b.owner}</Chip>}
-              <button onClick={() => patchBattle(b, { status: "active" })} disabled={activeFull}
-                title={activeFull ? `Max ${MAX_ACTIVE} active battles. Finish or pause one first.` : "Make this an active battle"}
-                style={{ ...ghostBtn, background: activeFull ? T.pillBg : T.blue + "18", color: activeFull ? T.textTert : T.blue, cursor: activeFull ? "default" : "pointer" }}>Start ▸</button>
+              <button onClick={() => activeFull ? setSwap({ incoming: { kind: "battle", item: b } }) : patchBattle(b, { status: "active" })}
+                title={activeFull ? "Focus is full. Swap it in for one of the active battles" : "Make this an active battle"}
+                style={{ ...ghostBtn, background: T.blue + "18", color: T.blue }}>{activeFull ? "⇄ Swap in" : "Start ▸"}</button>
               <ArrowBtns list={upNext} idx={i} />
             </div>
           ))}
@@ -651,6 +745,7 @@ export default function BattlesTracker() {
                     <div style={{ flex: 1, fontSize: 18, fontWeight: 700, letterSpacing: "-0.02em", minWidth: 160 }}>{b.title}</div>
                     {b.owner && <Chip color={T.textSec} bg={T.pillBg}>👤 {b.owner}</Chip>}
                     {deadlineChip(b.deadline)}
+                    <button onClick={() => setSwap({ outgoing: b })} style={ghostBtn}>⇄ Swap</button>
                     <button onClick={() => setBattleModal(b)} style={ghostBtn}>Edit</button>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
@@ -807,6 +902,10 @@ export default function BattlesTracker() {
       ) : view === "progress" ? Progress() : view === "ideas" ? Ideas() : Overview()}
 
       {battleModal && <BattleModal initial={battleModal} owners={owners} activeFull={activeFull} onSubmit={saveBattle} onDelete={deleteBattle} onClose={() => setBattleModal(null)} />}
+      {swap && (
+        <SwapModal incoming={swap.incoming} outgoing={swap.outgoing} active={active} candidates={swapCandidates} full={activeFull}
+          onSwap={doSwap} onQueue={swap.incoming?.kind === "idea" ? () => queueIdea(swap.incoming.item) : null} onClose={() => setSwap(null)} />
+      )}
       {ideaModal && <IdeaModal initial={ideaModal} owners={owners} onSubmit={saveIdea} onDelete={deleteIdea} onClose={() => setIdeaModal(null)} />}
     </div>
   );
