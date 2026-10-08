@@ -33,6 +33,7 @@ const VIEWS = [
   { key: "ideas",    label: "Idea catalog" },
 ];
 const VIEW_KEY = "cainte_mwb_view";
+const MAX_ACTIVE = 3; // mirrored server-side (MWB_MAX_ACTIVE)
 
 const iso = (v) => (v ? String(v).slice(0, 10) : "");
 const fmtD = (v) => {
@@ -55,7 +56,7 @@ const ideaScore = (i) => Number(i.impact || 0) * (6 - Number(i.effort || 0));
 
 // ── API ──────────────────────────────────────────────────────────────────────
 const jreq = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-const j = (p) => p.then((r) => r.json());
+const j = (p) => p.then(async (r) => { const d = await r.json(); if (!r.ok) throw new Error(d.error || "Something went wrong"); return d; });
 const mwbApi = {
   data: () => j(api("/api/mwb/data")),
   createBattle: (b) => j(api("/api/mwb/battles", jreq("POST", b))),
@@ -152,7 +153,7 @@ const ModalActions = ({ onDelete, onSubmit, valid, busy, label }) => (
 );
 
 // ── Battle modal ─────────────────────────────────────────────────────────────
-function BattleModal({ initial, owners, onSubmit, onDelete, onClose }) {
+function BattleModal({ initial, owners, activeFull, onSubmit, onDelete, onClose }) {
   const editing = !!initial?.id;
   const [form, setForm] = useState({
     title: initial?.title || "",
@@ -160,12 +161,13 @@ function BattleModal({ initial, owners, onSubmit, onDelete, onClose }) {
     success: initial?.success || "",
     owner: initial?.owner || "",
     deadline: iso(initial?.deadline),
-    status: initial?.status || "active",
+    status: initial?.status || (activeFull ? "next" : "active"),
     health: initial?.health || "on_track",
   });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
-  const valid = form.title.trim().length > 0;
+  const blocked = activeFull && form.status === "active" && initial?.status !== "active";
+  const valid = form.title.trim().length > 0 && !blocked;
   const submit = async () => {
     if (!valid || busy) return;
     setBusy(true);
@@ -200,6 +202,7 @@ function BattleModal({ initial, owners, onSubmit, onDelete, onClose }) {
       <div style={{ marginBottom: 18 }}>
         <FormLabel>Status</FormLabel>
         <Segmented options={Object.entries(STATUS)} value={form.status} onChange={(v) => set("status", v)} />
+        {blocked && <div style={{ fontSize: 13, color: T.red, marginTop: 8 }}>Max {MAX_ACTIVE} active battles. Move one to Won, Paused or Up next first, or save this one as Up next.</div>}
       </div>
       <div style={{ marginBottom: 26 }}>
         <FormLabel>Health</FormLabel>
@@ -302,7 +305,7 @@ function StepRow({ step, onToggle, onRemove }) {
           {late ? "⚠ " : ""}{fmtD(step.deadline)}
         </span>
       )}
-      <button onClick={onRemove} title="Remove step"
+      <button onClick={onRemove} title="Remove task"
         style={{ background: "none", border: "none", cursor: "pointer", color: T.textTert, fontSize: 13, padding: "2px 4px" }}>✕</button>
     </div>
   );
@@ -321,7 +324,7 @@ function AddStep({ owners, onAdd }) {
   const inp = { ...smallInput, padding: "9px 12px", fontSize: 14 };
   return (
     <form onSubmit={add} style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Add a step…" style={{ ...inp, flex: "3 1 200px", width: "auto" }} {...focusBlue} />
+      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Add a task…" style={{ ...inp, flex: "3 1 200px", width: "auto" }} {...focusBlue} />
       <input value={owner} onChange={(e) => setOwner(e.target.value)} list="mwb-owners-s" placeholder="Owner" style={{ ...inp, flex: "1 1 100px", width: "auto" }} {...focusBlue}
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
       <datalist id="mwb-owners-s">{owners.map((o) => <option key={o} value={o} />)}</datalist>
@@ -391,7 +394,6 @@ export default function BattlesTracker() {
     const done = s.filter((x) => x.done).length;
     return { done, total: s.length, pct: s.length ? Math.round((done / s.length) * 100) : 0 };
   };
-  const nextStepOf = (b) => (stepsBy[b.id] || []).find((s) => !s.done);
 
   const active = data.battles.filter((b) => b.status === "active");
   const upNext = data.battles.filter((b) => b.status === "next");
@@ -413,19 +415,25 @@ export default function BattlesTracker() {
   const activeDone = activeSteps.filter((s) => s.done).length;
 
   // ── Mutations ──────────────────────────────────────────────────────────────
+  const activeFull = active.length >= MAX_ACTIVE;
   const saveBattle = async (form) => {
-    if (battleModal?.id) await mwbApi.updateBattle(battleModal.id, form);
-    else await mwbApi.createBattle(form);
+    try {
+      if (battleModal?.id) await mwbApi.updateBattle(battleModal.id, form);
+      else await mwbApi.createBattle(form);
+    } catch (e) { alert(e.message); return; }
     setBattleModal(null);
     reload();
   };
   const deleteBattle = async () => {
-    if (!confirm("Delete this battle and all its steps?")) return;
+    if (!confirm("Delete this battle and all its tasks?")) return;
     await mwbApi.removeBattle(battleModal.id);
     setBattleModal(null);
     reload();
   };
-  const patchBattle = async (b, patch) => { await mwbApi.updateBattle(b.id, patch); reload(); };
+  const patchBattle = async (b, patch) => {
+    try { await mwbApi.updateBattle(b.id, patch); } catch (e) { alert(e.message); }
+    reload();
+  };
   // Moves a battle one place up/down within its own status group.
   const move = async (list, idx, dir) => {
     const j2 = idx + dir;
@@ -446,7 +454,7 @@ export default function BattlesTracker() {
     reload();
   };
   const removeStep = async (s) => {
-    if (!confirm(`Remove step "${s.title}"?`)) return;
+    if (!confirm(`Remove task "${s.title}"?`)) return;
     await mwbApi.removeStep(s.id);
     reload();
   };
@@ -497,12 +505,14 @@ export default function BattlesTracker() {
     </div>
   );
 
-  const BattleCard = ({ b, idx }) => {
+  // Plain render function (not a component) so the add-task input keeps
+  // focus across reloads.
+  const renderBattleCard = (b, idx) => {
     const p = progressOf(b);
-    const next = nextStepOf(b);
     const h = HEALTH[b.health] || HEALTH.on_track;
+    const tasks = stepsBy[b.id] || [];
     return (
-      <div style={{ ...card, padding: "22px 24px", display: "flex", gap: 18, borderLeft: `5px solid ${h.color}` }}>
+      <div key={b.id} style={{ ...card, padding: "22px 24px", display: "flex", gap: 18, borderLeft: `5px solid ${h.color}` }}>
         <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: idx === 0 ? T.text : T.textTert, minWidth: 40, lineHeight: 1 }}>#{idx + 1}</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
@@ -521,13 +531,13 @@ export default function BattlesTracker() {
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14 }}>
             <div style={{ flex: 1 }}><ProgressBar pct={p.pct} color={h.color} /></div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: T.textSec, whiteSpace: "nowrap" }}>{p.total ? `${p.done}/${p.total} steps` : "No steps yet"}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: T.textSec, whiteSpace: "nowrap" }}>{p.total ? `${p.done}/${p.total} tasks` : "No tasks yet"}</div>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 13, color: T.textSec, minWidth: 0 }}>
-              {next ? <>Next: <span style={{ color: T.text, fontWeight: 600 }}>{next.title}</span>{next.owner ? ` · ${next.owner}` : ""}{next.deadline ? ` · ${fmtD(next.deadline)}` : ""}</> : p.total ? "All steps done 🎉" : ""}
-            </div>
-            <button onClick={() => setView("progress")} style={ghostBtn}>Open steps ›</button>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.textTert, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Tasks</div>
+            {tasks.length === 0 && <div style={{ fontSize: 13, color: T.textTert, padding: "6px 0" }}>No tasks yet. What has to happen to win this?</div>}
+            {tasks.map((s) => <StepRow key={s.id} step={s} onToggle={() => toggleStep(s)} onRemove={() => removeStep(s)} />)}
+            <AddStep owners={owners} onAdd={(form) => addStep(b.id, form)} />
           </div>
         </div>
         <ArrowBtns list={active} idx={idx} />
@@ -540,26 +550,29 @@ export default function BattlesTracker() {
     <>
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
         {stat("Active battles", active.length, null, upNext.length ? `${upNext.length} up next` : null)}
-        {stat("Steps done", activeSteps.length ? `${Math.round((activeDone / activeSteps.length) * 100)}%` : "–", null, `${activeDone} of ${activeSteps.length}`)}
-        {stat("Overdue steps", overdue.length, overdue.length ? T.red : T.green, `${dueSoon.length} due within 7 days`)}
+        {stat("Tasks done", activeSteps.length ? `${Math.round((activeDone / activeSteps.length) * 100)}%` : "–", null, `${activeDone} of ${activeSteps.length}`)}
+        {stat("Overdue tasks", overdue.length, overdue.length ? T.red : T.green, `${dueSoon.length} due within 7 days`)}
         {stat("Open ideas", openIdeas.length, null, `${data.battles.filter((b) => b.status === "won").length} battles won`)}
       </div>
 
-      <div style={sectionTitle}>🎯 Our focus, in priority order</div>
+      <div style={{ ...sectionTitle, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span>🎯 Our focus, in priority order</span>
+        <span style={{ color: activeFull ? T.orange : T.textTert, textTransform: "none", letterSpacing: 0 }}>{active.length} / {MAX_ACTIVE} battles</span>
+      </div>
       {active.length === 0 ? (
         <div style={{ ...card, padding: "48px 24px", textAlign: "center" }}>
           <div style={{ fontSize: 34, marginBottom: 10 }}>🎯</div>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>No active battles yet</div>
-          <div style={{ fontSize: 14, color: T.textSec, marginBottom: 16 }}>Pick the 3–5 things we must win, and the whole team knows where to look.</div>
+          <div style={{ fontSize: 14, color: T.textSec, marginBottom: 16 }}>Pick the max 3 things we must win, and the whole team knows where to look.</div>
           <button onClick={() => setBattleModal({})} style={primaryBtn}>＋ New battle</button>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {active.map((b, i) => <BattleCard key={b.id} b={b} idx={i} />)}
+          {active.map((b, i) => renderBattleCard(b, i))}
         </div>
       )}
-      {active.length > 5 && (
-        <div style={{ fontSize: 13, color: T.orange, marginTop: 10 }}>⚠ {active.length} active battles. If everything is a priority, nothing is. Consider moving some to "Up next".</div>
+      {activeFull && (
+        <div style={{ fontSize: 13, color: T.textSec, marginTop: 10 }}>Focus is full ({MAX_ACTIVE}/{MAX_ACTIVE}). New battles go to "Up next" until one is won, paused or dropped.</div>
       )}
 
       <div style={sectionTitle}>⏭ Up next</div>
@@ -574,7 +587,9 @@ export default function BattlesTracker() {
                 {b.why && <div style={{ fontSize: 13, color: T.textSec, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.why}</div>}
               </div>
               {b.owner && <Chip color={T.textSec} bg={T.pillBg}>{b.owner}</Chip>}
-              <button onClick={() => patchBattle(b, { status: "active" })} style={{ ...ghostBtn, background: T.blue + "18", color: T.blue }}>Start ▸</button>
+              <button onClick={() => patchBattle(b, { status: "active" })} disabled={activeFull}
+                title={activeFull ? `Max ${MAX_ACTIVE} active battles. Finish or pause one first.` : "Make this an active battle"}
+                style={{ ...ghostBtn, background: activeFull ? T.pillBg : T.blue + "18", color: activeFull ? T.textTert : T.blue, cursor: activeFull ? "default" : "pointer" }}>Start ▸</button>
               <ArrowBtns list={upNext} idx={i} />
             </div>
           ))}
@@ -650,7 +665,7 @@ export default function BattlesTracker() {
                   </div>
                   <UpdateBox key={`${b.id}-${b.update_at}`} battle={b} onSave={(text) => patchBattle(b, { latest_update: text })} />
                   <div style={{ marginTop: 14 }}>
-                    {steps.length === 0 && <div style={{ fontSize: 13, color: T.textTert, padding: "6px 0" }}>No steps yet. Break the battle down into concrete actions with owners and deadlines.</div>}
+                    {steps.length === 0 && <div style={{ fontSize: 13, color: T.textTert, padding: "6px 0" }}>No tasks yet. Break the battle down into concrete tasks with owners and deadlines.</div>}
                     {steps.map((s) => <StepRow key={s.id} step={s} onToggle={() => toggleStep(s)} onRemove={() => removeStep(s)} />)}
                     <AddStep owners={owners} onAdd={(form) => addStep(b.id, form)} />
                   </div>
@@ -791,7 +806,7 @@ export default function BattlesTracker() {
         <div style={{ textAlign: "center", color: T.textSec, padding: "60px 0" }}>Loading…</div>
       ) : view === "progress" ? Progress() : view === "ideas" ? Ideas() : Overview()}
 
-      {battleModal && <BattleModal initial={battleModal} owners={owners} onSubmit={saveBattle} onDelete={deleteBattle} onClose={() => setBattleModal(null)} />}
+      {battleModal && <BattleModal initial={battleModal} owners={owners} activeFull={activeFull} onSubmit={saveBattle} onDelete={deleteBattle} onClose={() => setBattleModal(null)} />}
       {ideaModal && <IdeaModal initial={ideaModal} owners={owners} onSubmit={saveIdea} onDelete={deleteIdea} onClose={() => setIdeaModal(null)} />}
     </div>
   );

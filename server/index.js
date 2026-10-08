@@ -2203,6 +2203,11 @@ app.delete('/api/tk/events/:id', async (req, res) => {
 const MWB_STATUS = ['active', 'next', 'won', 'paused', 'dropped'];
 const MWB_HEALTH = ['on_track', 'at_risk', 'off_track'];
 const MWB_IDEA_STATUS = ['new', 'considering', 'parked', 'promoted'];
+// Focus rule: never more than this many active battles per brand.
+const MWB_MAX_ACTIVE = 3;
+const mwbActiveFull = async (brand) =>
+  (await pool.query(`SELECT COUNT(*)::int AS n FROM mwb_battles WHERE brand=$1 AND status='active'`, [brand])).rows[0].n >= MWB_MAX_ACTIVE;
+const mwbLimitErr = { error: `Max ${MWB_MAX_ACTIVE} active battles. Move one to Up next, Won or Paused first.`, limit: true };
 const mwbBattleOut = (r) => ({ ...r, deadline: kbDateOut(r.deadline) });
 const mwbStepOut = (r) => ({ ...r, deadline: kbDateOut(r.deadline) });
 const clamp15 = (v, d) => { const n = parseInt(v, 10); return n >= 1 && n <= 5 ? n : d; };
@@ -2286,6 +2291,7 @@ app.post('/api/mwb/battles', async (req, res) => {
     const brand = brandOf(req);
     const f = mwbBattleFields(req.body || {});
     if (!f.title) return res.status(400).json({ error: 'Title required' });
+    if (f.status === 'active' && await mwbActiveFull(brand)) return res.status(400).json(mwbLimitErr);
     const r = await pool.query(
       `INSERT INTO mwb_battles (brand, title, why, success, owner, status, health, deadline, rank)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
@@ -2302,6 +2308,7 @@ app.put('/api/mwb/battles/:id', async (req, res) => {
     const prev = cur.rows[0];
     const f = mwbBattleFields(req.body || {}, prev);
     if (!f.title) return res.status(400).json({ error: 'Title required' });
+    if (f.status === 'active' && prev.status !== 'active' && await mwbActiveFull(brandOf(req))) return res.status(400).json(mwbLimitErr);
     // A posted status update is stamped so the team can see how fresh it is.
     const upd = req.body.latest_update !== undefined && String(req.body.latest_update) !== prev.latest_update;
     const r = await pool.query(
