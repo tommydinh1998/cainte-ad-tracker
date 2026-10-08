@@ -2195,13 +2195,272 @@ app.delete('/api/tk/events/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Must Win Battles ──────────────────────────────────────────────────────────
+// The company's few top priorities (battles, ranked), the concrete steps that
+// move each one, and an idea catalog where anyone can park proposals until
+// they're promoted to a battle. mwb_battles and mwb_ideas are brand-scoped
+// roots; steps inherit through their battle.
+const MWB_STATUS = ['active', 'next', 'won', 'paused', 'dropped'];
+const MWB_HEALTH = ['on_track', 'at_risk', 'off_track'];
+const MWB_IDEA_STATUS = ['new', 'considering', 'parked', 'promoted'];
+const mwbBattleOut = (r) => ({ ...r, deadline: kbDateOut(r.deadline) });
+const mwbStepOut = (r) => ({ ...r, deadline: kbDateOut(r.deadline) });
+const clamp15 = (v, d) => { const n = parseInt(v, 10); return n >= 1 && n <= 5 ? n : d; };
+
+async function initBattles() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mwb_battles (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      title TEXT NOT NULL,
+      why TEXT NOT NULL DEFAULT '',
+      success TEXT NOT NULL DEFAULT '',
+      owner TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      health TEXT NOT NULL DEFAULT 'on_track',
+      rank INTEGER NOT NULL DEFAULT 0,
+      deadline DATE,
+      latest_update TEXT NOT NULL DEFAULT '',
+      update_at TIMESTAMPTZ,
+      idea_id INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS mwb_battles_brand_idx ON mwb_battles (brand);
+    CREATE TABLE IF NOT EXISTS mwb_steps (
+      id SERIAL PRIMARY KEY,
+      battle_id INTEGER NOT NULL REFERENCES mwb_battles(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      owner TEXT NOT NULL DEFAULT '',
+      deadline DATE,
+      done BOOLEAN NOT NULL DEFAULT FALSE,
+      done_at TIMESTAMPTZ,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS mwb_steps_battle_idx ON mwb_steps (battle_id);
+    CREATE TABLE IF NOT EXISTS mwb_ideas (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL DEFAULT 'cainte',
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '',
+      submitted_by TEXT NOT NULL DEFAULT '',
+      impact INTEGER NOT NULL DEFAULT 3,
+      effort INTEGER NOT NULL DEFAULT 3,
+      votes INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'new',
+      battle_id INTEGER REFERENCES mwb_battles(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS mwb_ideas_brand_idx ON mwb_ideas (brand);
+  `);
+}
+
+app.get('/api/mwb/data', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const b = await pool.query('SELECT * FROM mwb_battles WHERE brand=$1 ORDER BY rank, id', [brand]);
+    const s = await pool.query('SELECT * FROM mwb_steps WHERE battle_id IN (SELECT id FROM mwb_battles WHERE brand=$1) ORDER BY done, deadline NULLS LAST, sort_order, id', [brand]);
+    const i = await pool.query('SELECT * FROM mwb_ideas WHERE brand=$1 ORDER BY created_at DESC', [brand]);
+    res.json({ battles: b.rows.map(mwbBattleOut), steps: s.rows.map(mwbStepOut), ideas: i.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Partial-update friendly: anything missing from the body keeps `prev`.
+const mwbBattleFields = (b, prev = {}) => ({
+  title: b.title !== undefined ? String(b.title).trim() : prev.title,
+  why: b.why !== undefined ? String(b.why) : (prev.why || ''),
+  success: b.success !== undefined ? String(b.success) : (prev.success || ''),
+  owner: b.owner !== undefined ? String(b.owner).trim() : (prev.owner || ''),
+  status: MWB_STATUS.includes(b.status) ? b.status : (prev.status || 'active'),
+  health: MWB_HEALTH.includes(b.health) ? b.health : (prev.health || 'on_track'),
+  deadline: b.deadline !== undefined ? kbDate(b.deadline) : (prev.deadline || null),
+});
+
+const mwbNextRank = async (brand) =>
+  (await pool.query('SELECT COALESCE(MAX(rank),0)+1 AS n FROM mwb_battles WHERE brand=$1', [brand])).rows[0].n;
+
+app.post('/api/mwb/battles', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const f = mwbBattleFields(req.body || {});
+    if (!f.title) return res.status(400).json({ error: 'Title required' });
+    const r = await pool.query(
+      `INSERT INTO mwb_battles (brand, title, why, success, owner, status, health, deadline, rank)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [brand, f.title, f.why, f.success, f.owner, f.status, f.health, f.deadline, await mwbNextRank(brand)]
+    );
+    res.json(mwbBattleOut(r.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/mwb/battles/:id', async (req, res) => {
+  try {
+    const cur = await pool.query('SELECT * FROM mwb_battles WHERE id=$1 AND brand=$2', [req.params.id, brandOf(req)]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
+    const prev = cur.rows[0];
+    const f = mwbBattleFields(req.body || {}, prev);
+    if (!f.title) return res.status(400).json({ error: 'Title required' });
+    // A posted status update is stamped so the team can see how fresh it is.
+    const upd = req.body.latest_update !== undefined && String(req.body.latest_update) !== prev.latest_update;
+    const r = await pool.query(
+      `UPDATE mwb_battles SET title=$1, why=$2, success=$3, owner=$4, status=$5, health=$6, deadline=$7,
+         latest_update=$8, update_at=$9, updated_at=NOW() WHERE id=$10 RETURNING *`,
+      [f.title, f.why, f.success, f.owner, f.status, f.health, f.deadline,
+       upd ? String(req.body.latest_update) : prev.latest_update, upd ? new Date() : prev.update_at, req.params.id]
+    );
+    res.json(mwbBattleOut(r.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Body { ids: [...] } — the new order, top priority first.
+app.post('/api/mwb/battles/reorder', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Boolean) : [];
+    const brand = brandOf(req);
+    for (let i = 0; i < ids.length; i++) {
+      await pool.query('UPDATE mwb_battles SET rank=$1 WHERE id=$2 AND brand=$3', [i + 1, ids[i], brand]);
+    }
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/mwb/battles/:id', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    // Ideas promoted into this battle go back into the catalog.
+    await pool.query(`UPDATE mwb_ideas SET status='considering' WHERE battle_id=$1 AND brand=$2`, [req.params.id, brand]);
+    await pool.query('DELETE FROM mwb_battles WHERE id=$1 AND brand=$2', [req.params.id, brand]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+const mwbOwnsBattle = async (req, battleId) =>
+  (await pool.query('SELECT 1 FROM mwb_battles WHERE id=$1 AND brand=$2', [battleId, brandOf(req)])).rows.length > 0;
+const mwbStepBattle = async (stepId) =>
+  (await pool.query('SELECT battle_id FROM mwb_steps WHERE id=$1', [stepId])).rows[0]?.battle_id;
+
+app.post('/api/mwb/battles/:id/steps', async (req, res) => {
+  try {
+    if (!(await mwbOwnsBattle(req, req.params.id))) return res.status(404).json({ error: 'Not found' });
+    const title = String(req.body?.title || '').trim();
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    const r = await pool.query(
+      `INSERT INTO mwb_steps (battle_id, title, owner, deadline, sort_order)
+       VALUES ($1,$2,$3,$4,(SELECT COALESCE(MAX(sort_order),0)+1 FROM mwb_steps WHERE battle_id=$1)) RETURNING *`,
+      [req.params.id, title, String(req.body.owner || '').trim(), kbDate(req.body.deadline)]
+    );
+    res.json(mwbStepOut(r.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/mwb/steps/:id', async (req, res) => {
+  try {
+    const bid = await mwbStepBattle(req.params.id);
+    if (!bid || !(await mwbOwnsBattle(req, bid))) return res.status(404).json({ error: 'Not found' });
+    const prev = (await pool.query('SELECT * FROM mwb_steps WHERE id=$1', [req.params.id])).rows[0];
+    const b = req.body || {};
+    const title = b.title !== undefined ? String(b.title).trim() : prev.title;
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    const done = b.done !== undefined ? !!b.done : prev.done;
+    const r = await pool.query(
+      `UPDATE mwb_steps SET title=$1, owner=$2, deadline=$3, done=$4, done_at=$5 WHERE id=$6 RETURNING *`,
+      [title, b.owner !== undefined ? String(b.owner).trim() : prev.owner,
+       b.deadline !== undefined ? kbDate(b.deadline) : prev.deadline,
+       done, done ? (prev.done_at || new Date()) : null, req.params.id]
+    );
+    res.json(mwbStepOut(r.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/mwb/steps/:id', async (req, res) => {
+  try {
+    const bid = await mwbStepBattle(req.params.id);
+    if (bid && (await mwbOwnsBattle(req, bid))) await pool.query('DELETE FROM mwb_steps WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+const mwbIdeaFields = (b, prev = {}) => ({
+  title: b.title !== undefined ? String(b.title).trim() : prev.title,
+  description: b.description !== undefined ? String(b.description) : (prev.description || ''),
+  category: b.category !== undefined ? String(b.category) : (prev.category || ''),
+  submitted_by: b.submitted_by !== undefined ? String(b.submitted_by).trim() : (prev.submitted_by || ''),
+  impact: clamp15(b.impact, prev.impact || 3),
+  effort: clamp15(b.effort, prev.effort || 3),
+  status: MWB_IDEA_STATUS.includes(b.status) ? b.status : (prev.status || 'new'),
+});
+
+app.post('/api/mwb/ideas', async (req, res) => {
+  try {
+    const f = mwbIdeaFields(req.body || {});
+    if (!f.title) return res.status(400).json({ error: 'Title required' });
+    const r = await pool.query(
+      `INSERT INTO mwb_ideas (brand, title, description, category, submitted_by, impact, effort, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [brandOf(req), f.title, f.description, f.category, f.submitted_by, f.impact, f.effort, f.status]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/mwb/ideas/:id', async (req, res) => {
+  try {
+    const cur = await pool.query('SELECT * FROM mwb_ideas WHERE id=$1 AND brand=$2', [req.params.id, brandOf(req)]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
+    const f = mwbIdeaFields(req.body || {}, cur.rows[0]);
+    if (!f.title) return res.status(400).json({ error: 'Title required' });
+    const r = await pool.query(
+      `UPDATE mwb_ideas SET title=$1, description=$2, category=$3, submitted_by=$4, impact=$5, effort=$6, status=$7
+       WHERE id=$8 RETURNING *`,
+      [f.title, f.description, f.category, f.submitted_by, f.impact, f.effort, f.status, req.params.id]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Body { delta: 1 | -1 } — no user identity in the app, so it's a plain counter.
+app.post('/api/mwb/ideas/:id/vote', async (req, res) => {
+  try {
+    const d = Number(req.body?.delta) === -1 ? -1 : 1;
+    const r = await pool.query('UPDATE mwb_ideas SET votes=GREATEST(0, votes+$1) WHERE id=$2 AND brand=$3 RETURNING *',
+      [d, req.params.id, brandOf(req)]);
+    res.json(r.rows[0] || {});
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Turns an idea into a battle queued as "Up next" and links the two.
+app.post('/api/mwb/ideas/:id/promote', async (req, res) => {
+  try {
+    const brand = brandOf(req);
+    const cur = await pool.query('SELECT * FROM mwb_ideas WHERE id=$1 AND brand=$2', [req.params.id, brand]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
+    const idea = cur.rows[0];
+    const b = await pool.query(
+      `INSERT INTO mwb_battles (brand, title, why, owner, status, rank, idea_id)
+       VALUES ($1,$2,$3,$4,'next',$5,$6) RETURNING *`,
+      [brand, idea.title, idea.description, idea.submitted_by, await mwbNextRank(brand), idea.id]
+    );
+    await pool.query(`UPDATE mwb_ideas SET status='promoted', battle_id=$1 WHERE id=$2`, [b.rows[0].id, idea.id]);
+    res.json(mwbBattleOut(b.rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/mwb/ideas/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM mwb_ideas WHERE id=$1 AND brand=$2', [req.params.id, brandOf(req)]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.use(express.static(path.join(__dirname, '../dist')));
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
 const PORT = process.env.PORT || 3000;
-initDB().then(initTasks).then(() => {
+initDB().then(initTasks).then(initBattles).then(() => {
   app.listen(PORT, '0.0.0.0', () => console.log(`Server on port ${PORT}`));
   // Fredags- og mandagspåmindelser. Checkes hvert 5. minut.
   kpiTick();

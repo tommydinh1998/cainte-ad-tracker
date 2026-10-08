@@ -6,9 +6,11 @@ import CollectionTracker from "./CollectionTracker.jsx";
 import BudgetTracker from "./BudgetTracker.jsx";
 import KpiTracker from "./KpiTracker.jsx";
 import TaskTracker from "./TaskTracker.jsx";
+import BattlesTracker from "./BattlesTracker.jsx";
 import { BRANDS, getBrand, setBrand } from "./brand.js";
 
 const PRODUCTS = [
+  { key: "battles",    label: "Must Win Battles" },
   { key: "ads",        label: "Ad Tracker" },
   { key: "influencer", label: "Influencer Tracker" },
   { key: "collection", label: "Collection Tracker" },
@@ -143,6 +145,8 @@ export default function App() {
               ? <BudgetTracker key={brand} />
               : product === "tasks"
                 ? <TaskTracker key={`${brand}-${nav}`} />
+                : product === "battles"
+                  ? <BattlesTracker key={brand} />
                 : <KpiTracker key={brand} />}
     </div>
   );
