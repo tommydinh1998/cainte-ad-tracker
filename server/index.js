@@ -1386,13 +1386,19 @@ const KPI_PERSONS = [
     metrics: [
       { key: 'jana_paid_active',   cadence: 'weekly',  label: 'Betalte samarbejder — igangværende', auto: 'paid_active', definition: 'Paid, Ambassador og Ongoing med status igang/ongoing. Hentet fra Influencer Trackeren.' },
       { key: 'jana_paid_new',      cadence: 'weekly',  label: 'Nye betalte samarbejder',            auto: 'paid_new',    definition: 'Paid, Ambassador og Ongoing oprettet i perioden.' },
+      { key: 'jana_active_total',  cadence: 'weekly',  label: 'Aktive samarbejder i alt',           auto: 'active_total', definition: 'Alle igangværende samarbejder, også gifting, UGC og Fake Meta.' },
       { key: 'jana_gift_tiktok',   cadence: 'weekly',  label: 'TikTok-giftings',                    auto: 'gift_tiktok', target: 2, definition: 'Organiske, taggede giftings på TikTok.' },
       { key: 'jana_gift_total',    cadence: 'weekly',  label: 'Giftings samlet',                    auto: 'gift_total',  target: 5, definition: 'Organiske, taggede giftings på alle platforme, inkl. TikTok.' },
       { key: 'jana_tiktok_videos', cadence: 'weekly',  label: 'TikTok-videoer',                     auto: 'tiktok_videos', definition: 'Taggede TikTok-videoer. Content deles i gruppen.' },
       { key: 'jana_stories',       cadence: 'weekly',  label: 'Stories',                            auto: 'stories',     definition: 'Organiske, taggede stories. Content deles i gruppen.' },
       { key: 'jana_posts_reels',   cadence: 'weekly',  label: 'Posts og reels',                     auto: 'posts_reels', definition: 'Organiske, taggede posts og reels. Content deles i gruppen.' },
+      { key: 'jana_received_videos', cadence: 'weekly', label: 'Content modtaget — videoer' },
+      { key: 'jana_received_images', cadence: 'weekly', label: 'Content modtaget — billeder' },
+      { key: 'jana_fake_meta_week', cadence: 'weekly', label: 'Sendt til Fake Meta', definition: 'Content-stykker sendt videre til ads i ugen. Månedsmålet er 5.' },
       { key: 'jana_learning',      cadence: 'weekly',  label: 'Læring og næste fokus', kind: 'text', definition: 'Hvad virkede godt, og hvad skal prioriteres mere næste uge?' },
+      { key: 'jana_projects',      cadence: 'weekly',  label: 'Ekstra projekter',      kind: 'text', definition: 'Projekter og opgaver uden for de faste KPI\'er, fx NYC content shoot.' },
       { key: 'jana_extra',         cadence: 'weekly',  label: 'Ekstra bemærkninger',   kind: 'text', definition: 'Nye muligheder, særlige resultater og relevante opdateringer.' },
+      { key: 'jana_drive',         cadence: 'weekly',  label: 'Link til Drive-mappe',  kind: 'text', definition: 'Mappen med ugens taggede opslag.' },
       { key: 'jana_m_paid_active', cadence: 'monthly', label: 'Betalte samarbejder — igangværende', auto: 'paid_active' },
       { key: 'jana_m_paid_new',    cadence: 'monthly', label: 'Nye betalte samarbejder i måneden',  auto: 'paid_new' },
       { key: 'jana_fake_meta',     cadence: 'monthly', label: 'Fake Meta-content',                  target: 5, definition: 'Antal creatorvideoer sendt videre til ads.' },
@@ -1535,8 +1541,8 @@ async function initKpi() {
 // Personlige rapporter ud fra rolle-PDF'erne. Køres én gang pr. person: findes
 // personens første tal allerede, er alt videre rettet i appen og røres ikke.
 async function seedKpiPerson(p) {
-  const exists = await pool.query('SELECT 1 FROM kpi_metrics WHERE brand=$1 AND metric_key=$2', [p.brand, p.metrics[0].key]);
-  if (exists.rows.length) return;
+  const exists = await pool.query('SELECT owner_id FROM kpi_metrics WHERE brand=$1 AND metric_key=$2', [p.brand, p.metrics[0].key]);
+  if (exists.rows.length) return addKpiPersonMetrics(p, exists.rows[0].owner_id);
   let owner = (await pool.query('SELECT * FROM kpi_owners WHERE brand=$1 AND (name=$2 OR name=$3) ORDER BY id LIMIT 1',
     [p.brand, p.name, p.renameFrom || p.name])).rows[0];
   if (owner) {
@@ -1549,13 +1555,26 @@ async function seedKpiPerson(p) {
   if (p.retire?.length) {
     await pool.query('UPDATE kpi_metrics SET active=FALSE WHERE brand=$1 AND metric_key = ANY($2)', [p.brand, p.retire]);
   }
+  await addKpiPersonMetrics(p, owner.id);
+}
+
+// Felter der kommer til senere lægges ind uden at røre de eksisterende. Kommer
+// der noget nyt, sættes rækkefølgen efter listen, så det nye står det rigtige sted.
+async function addKpiPersonMetrics(p, ownerId) {
+  if (!ownerId) return;
+  let added = 0;
   for (const [i, m] of p.metrics.entries()) {
-    await pool.query(
+    const r = await pool.query(
       `INSERT INTO kpi_metrics (brand, metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order, kind, target, auto_key)
        VALUES ($1,$2,$3,$4,$5,'B',$6,'up',$7,$8,$9,TRUE,$10,$11,$12,$13)
        ON CONFLICT (brand, metric_key) DO NOTHING`,
       [p.brand, m.key, m.label, m.kind === 'text' ? '' : (m.unit ?? 'antal'), m.definition || '', m.cadence, p.func,
-       m.auto ? 'Influencer Tracker' : '', owner.id, (p.sortBase || 100) + i, m.kind || 'number', m.target ?? null, m.auto || '']);
+       m.auto ? 'Influencer Tracker' : '', ownerId, (p.sortBase || 100) + i, m.kind || 'number', m.target ?? null, m.auto || '']);
+    added += r.rowCount;
+  }
+  if (!added) return;
+  for (const [i, m] of p.metrics.entries()) {
+    await pool.query('UPDATE kpi_metrics SET sort_order=$3 WHERE brand=$1 AND metric_key=$2', [p.brand, m.key, (p.sortBase || 100) + i]);
   }
 }
 
@@ -1706,11 +1725,12 @@ async function kpiAuto(brand, period) {
   const [from, to] = kpiRange(period);
   const [paid, gifts, content] = await Promise.all([
     pool.query(
-      `SELECT COUNT(*) FILTER (WHERE c.status IN ('in_progress','ongoing'))::int AS active,
+      `SELECT COUNT(*) FILTER (WHERE c.status IN ('in_progress','ongoing') AND c.type = ANY($2))::int AS active,
+              COUNT(*) FILTER (WHERE c.status IN ('in_progress','ongoing'))::int AS active_total,
               COUNT(*) FILTER (WHERE c.status <> 'cancelled'
-                AND (c.created_at AT TIME ZONE 'Europe/Copenhagen')::date BETWEEN $3::date AND $4::date)::int AS new
+                AND c.type = ANY($2) AND (c.created_at AT TIME ZONE 'Europe/Copenhagen')::date BETWEEN $3::date AND $4::date)::int AS new
          FROM collaborations c JOIN creators cr ON cr.id=c.creator_id
-        WHERE cr.brand=$1 AND c.type = ANY($2)`, [brand, KPI_PAID_TYPES, from, to]),
+        WHERE cr.brand=$1`, [brand, KPI_PAID_TYPES, from, to]),
     pool.query(
       `SELECT COUNT(DISTINCT c.id)::int AS total,
               COUNT(DISTINCT c.id) FILTER (WHERE p.platform='TikTok' OR p.type='TikTok Video')::int AS tiktok
@@ -1724,7 +1744,7 @@ async function kpiAuto(brand, period) {
         WHERE cr.brand=$1 AND p.posted_on BETWEEN $2 AND $3`, [brand, from, to]),
   ]);
   return {
-    paid_active: paid.rows[0].active, paid_new: paid.rows[0].new,
+    paid_active: paid.rows[0].active, paid_new: paid.rows[0].new, active_total: paid.rows[0].active_total,
     gift_total: gifts.rows[0].total, gift_tiktok: gifts.rows[0].tiktok,
     ...content.rows[0],
   };
