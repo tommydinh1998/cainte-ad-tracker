@@ -259,8 +259,10 @@ function Row({ m, d, entry, prev, first, open, onToggle, onChanged, busy, setBus
   const [decision, setDecision] = useState("");
   const owner = d.owners.find(o => o.id === m.owner_id);
 
-  const val = entry ? Number(entry.value) : null;
-  const prevVal = prev ? Number(prev.value) : null;
+  const isText = m.kind === "text";
+  const val = entry && entry.value !== null ? Number(entry.value) : null;
+  const prevVal = prev && prev.value !== null ? Number(prev.value) : null;
+  const target = m.target === null || m.target === undefined ? null : Number(m.target);
   const delta = val !== null && prevVal !== null && prevVal !== 0 ? (val - prevVal) / Math.abs(prevVal) : null;
   const deviating = delta !== null && Math.abs(delta) >= DEVIATION;
   // Op er ikke godt for stock-out og defekt-tickets. En rød pil der peger
@@ -270,8 +272,9 @@ function Row({ m, d, entry, prev, first, open, onToggle, onChanged, busy, setBus
 
   const save = async (value) => {
     setBusy(true);
+    const payload = isText ? { text: value ?? "" } : { value };
     await api("/api/kpi/entries", { method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ metric_id: m.id, period: d.period, value, submitted_by: "Tommy" }) });
+      body: JSON.stringify({ metric_id: m.id, period: d.period, ...payload, submitted_by: "Tommy" }) });
     await onChanged();
     setBusy(false);
     setEdit("");
@@ -304,16 +307,30 @@ function Row({ m, d, entry, prev, first, open, onToggle, onChanged, busy, setBus
           </span>
         )}
 
+        {target !== null && val !== null && (
+          <span style={{ fontSize: 12, fontWeight: 700, color: val >= target ? T.green : T.red }}>mål {nf(target, m.unit)}</span>
+        )}
+        {isText ? (
+          <div style={{ maxWidth: 360, textAlign: "right", fontSize: 13.5, color: entry ? T.textSec : T.orange,
+                        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {entry ? (entry.text_value || "— tomt") : "— manglende"}
+          </div>
+        ) : (
         <div style={{ minWidth: 110, textAlign: "right", fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em",
-                      color: val === null ? T.orange : deviating ? T.text : T.textSec }}>
-          {val === null ? "— manglende" : nf(val, m.unit)}
+                      color: !entry ? T.orange : deviating ? T.text : T.textSec }}>
+          {!entry ? "— manglende" : nf(val, m.unit)}
         </div>
+        )}
         <span style={{ color: T.textTert, fontSize: 12, width: 12 }}>{open ? "▾" : "▸"}</span>
       </div>
 
       {open && (
         <div style={{ padding: "0 20px 18px 20px", background: "rgba(118,118,128,0.04)" }}>
           {m.definition && <div style={{ fontSize: 13, color: T.textSec, lineHeight: 1.5, padding: "12px 0" }}>{m.definition}</div>}
+          {isText && entry?.text_value && (
+            <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap", background: "#fff", border: `1px solid ${T.border}`,
+                          borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>{entry.text_value}</div>
+          )}
 
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "4px 0 14px" }}>
             {d.history.map(p => {
@@ -321,18 +338,19 @@ function Row({ m, d, entry, prev, first, open, onToggle, onChanged, busy, setBus
               return (
                 <div key={p} style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 9, padding: "6px 10px", minWidth: 64 }}>
                   <div style={{ fontSize: 10, color: T.textTert, fontWeight: 700 }}>{p.replace(/^\d{4}-/, "")}</div>
-                  <div style={{ fontSize: 13, fontWeight: 650, color: e ? T.text : T.textTert }}>{e ? nf(Number(e.value), m.unit) : "—"}</div>
+                  <div style={{ fontSize: 13, fontWeight: 650, color: e ? T.text : T.textTert }}>{!e ? "—" : isText ? "✓" : nf(e.value, m.unit)}</div>
                 </div>
               );
             })}
           </div>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <input value={edit} onChange={e => setEdit(e.target.value)} placeholder={val === null ? "Indtast tal" : "Ret tal"}
-              type="number" step="any"
+            <input value={edit} onChange={e => setEdit(e.target.value)}
+              placeholder={isText ? (entry ? "Ret tekst" : "Skriv tekst") : val === null ? "Indtast tal" : "Ret tal"}
+              type={isText ? "text" : "number"} step="any"
               style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 10, padding: "9px 12px", fontSize: 14, width: 130, outline: "none", fontFamily: "inherit" }} />
             <Btn small kind="primary" onClick={() => save(edit)} style={{ opacity: busy ? 0.6 : 1 }}>Gem</Btn>
-            {val !== null && <Btn small kind="danger" onClick={() => save(null)}>Ryd</Btn>}
+            {entry && <Btn small kind="danger" onClick={() => save(null)}>Ryd</Btn>}
             <div style={{ flex: 1 }} />
             <Chip color={m.layer === "A" ? T.blue : T.purple}>{m.layer === "A" ? "Lag A" : "Lag B"}</Chip>
             {m.func && <Chip color={T.textSec} bg={T.pillBg}>{m.func}</Chip>}
@@ -470,6 +488,9 @@ function Definitions({ d, onChanged }) {
                  options={[{ value: "weekly", label: "Ugentligt" }, { value: "monthly", label: "Månedligt" }, { value: "quarterly", label: "Kvartalsvis" }]} />
             <Sel label="Retning" value={editing.direction || "up"} onChange={v => setEditing({ ...editing, direction: v })}
                  options={[{ value: "up", label: "Op er godt" }, { value: "down", label: "Ned er godt" }, { value: "neutral", label: "Ingen retning" }]} />
+            <Sel label="Type" value={editing.kind || "number"} onChange={v => setEditing({ ...editing, kind: v })}
+                 options={[{ value: "number", label: "Tal" }, { value: "text", label: "Tekst" }]} />
+            <Inp label="Mål pr. periode" type="number" value={editing.target ?? ""} onChange={v => setEditing({ ...editing, target: v })} placeholder="intet mål" />
             <Sel label="Enhed" value={editing.unit} onChange={v => setEditing({ ...editing, unit: v })}
                  options={[{ value: "antal", label: "antal" }, { value: "%", label: "%" }, { value: "EUR", label: "EUR" }, { value: "x", label: "x (ratio)" }, { value: "", label: "ingen" }]} />
             <Sel label="Ansvarlig" value={editing.owner_id} onChange={v => setEditing({ ...editing, owner_id: v })}

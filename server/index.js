@@ -1378,6 +1378,52 @@ const KPI_SEED_METRICS = [
   { key: "aov_returning",        label: "AOV — returnerende kunder",       unit: "EUR", func: "Brand", source: "Shopify",      layer: "A", cadence: "quarterly", active: false, sort: 66, definition: "Ordreværdi for kunder der har købt før." },
 ];
 
+// Personlige rapporter (rolle-PDF'er okt-26). Kun Cainté.
+const KPI_PERSONS = [
+  {
+    brand: 'cainte', name: 'Jana', func: 'Influencer', renameFrom: 'Influencer', sortBase: 100,
+    retire: ['giftings_sent', 'ugc_received'],
+    metrics: [
+      { key: 'jana_paid_active',   cadence: 'weekly',  label: 'Betalte samarbejder — igangværende', auto: 'paid_active', definition: 'Paid, Ambassador og Ongoing med status igang/ongoing. Hentet fra Influencer Trackeren.' },
+      { key: 'jana_paid_new',      cadence: 'weekly',  label: 'Nye betalte samarbejder',            auto: 'paid_new',    definition: 'Paid, Ambassador og Ongoing oprettet i perioden.' },
+      { key: 'jana_gift_tiktok',   cadence: 'weekly',  label: 'TikTok-giftings',                    auto: 'gift_tiktok', target: 2, definition: 'Organiske, taggede giftings på TikTok.' },
+      { key: 'jana_gift_total',    cadence: 'weekly',  label: 'Giftings samlet',                    auto: 'gift_total',  target: 5, definition: 'Organiske, taggede giftings på alle platforme, inkl. TikTok.' },
+      { key: 'jana_tiktok_videos', cadence: 'weekly',  label: 'TikTok-videoer',                     auto: 'tiktok_videos', definition: 'Taggede TikTok-videoer. Content deles i gruppen.' },
+      { key: 'jana_stories',       cadence: 'weekly',  label: 'Stories',                            auto: 'stories',     definition: 'Organiske, taggede stories. Content deles i gruppen.' },
+      { key: 'jana_posts_reels',   cadence: 'weekly',  label: 'Posts og reels',                     auto: 'posts_reels', definition: 'Organiske, taggede posts og reels. Content deles i gruppen.' },
+      { key: 'jana_learning',      cadence: 'weekly',  label: 'Læring og næste fokus', kind: 'text', definition: 'Hvad virkede godt, og hvad skal prioriteres mere næste uge?' },
+      { key: 'jana_extra',         cadence: 'weekly',  label: 'Ekstra bemærkninger',   kind: 'text', definition: 'Nye muligheder, særlige resultater og relevante opdateringer.' },
+      { key: 'jana_m_paid_active', cadence: 'monthly', label: 'Betalte samarbejder — igangværende', auto: 'paid_active' },
+      { key: 'jana_m_paid_new',    cadence: 'monthly', label: 'Nye betalte samarbejder i måneden',  auto: 'paid_new' },
+      { key: 'jana_fake_meta',     cadence: 'monthly', label: 'Fake Meta-content',                  target: 5, definition: 'Antal creatorvideoer sendt videre til ads.' },
+      { key: 'jana_cavere_sent',   cadence: 'monthly', label: 'Cavere Signature — ure sendt ud' },
+      { key: 'jana_cavere_posted', cadence: 'monthly', label: 'Cavere Signature — creators der har postet' },
+      { key: 'jana_best_men',      cadence: 'monthly', label: 'Bedste mandlige creator',  kind: 'text', definition: 'Navn og salgstal.' },
+      { key: 'jana_best_women',    cadence: 'monthly', label: 'Bedste kvindelige creator', kind: 'text', definition: 'Navn og salgstal.' },
+      { key: 'jana_shopmy_packages', cadence: 'monthly', label: 'ShopMy — pakker sendt ud' },
+      { key: 'jana_shopmy_shares',   cadence: 'monthly', label: 'ShopMy — delinger' },
+      { key: 'jana_shopmy_revenue',  cadence: 'monthly', label: 'ShopMy — omsætning', unit: 'EUR' },
+      { key: 'jana_special',       cadence: 'monthly', label: 'Særlige resultater', kind: 'text', definition: 'Fx gifting til en creator med 3 mio. følgere eller tre nye creators fundet til NYC.' },
+    ],
+  },
+  {
+    brand: 'cainte', name: 'Sille', func: 'Branding', sortBase: 200,
+    metrics: [
+      { key: 'sille_daily',       cadence: 'weekly',  label: 'Dagligt fokus', kind: 'text', definition: 'Kort overblik over arbejdet mandag til fredag (og evt. weekend). Links til leverancer hvor muligt.' },
+      { key: 'sille_priorities',  cadence: 'weekly',  label: 'Ugens tre vigtigste prioriteringer', kind: 'text' },
+      { key: 'sille_next',        cadence: 'weekly',  label: 'Næste uges tre vigtigste prioriteringer', kind: 'text' },
+      { key: 'sille_images',      cadence: 'weekly',  label: 'Færdige billeder', definition: 'Til content og ads i løbet af ugen.' },
+      { key: 'sille_videos',      cadence: 'weekly',  label: 'Færdige videoer',  definition: 'Til content og ads i løbet af ugen.' },
+      { key: 'sille_learning',    cadence: 'weekly',  label: 'Læring', kind: 'text', definition: 'Hvad virkede godt, og hvad skal bruges videre? Fx et minishoot der gav materiale til tre ad-koncepter.' },
+      { key: 'sille_minishoots',  cadence: 'monthly', label: 'Minishoots leveret' },
+      { key: 'sille_minishoot_content', cadence: 'monthly', label: 'Content fra minishoots', kind: 'text', definition: 'Overblik over det content, der kom ud af dem.' },
+      { key: 'sille_top_ads_men',   cadence: 'monthly', label: 'Nye top ads — mænd',   kind: 'text', definition: 'Månedens nye topperformende annoncer på Meta og TikTok. Links og resultater.' },
+      { key: 'sille_top_ads_women', cadence: 'monthly', label: 'Nye top ads — kvinder', kind: 'text', definition: 'Månedens nye topperformende annoncer på Meta og TikTok. Links og resultater.' },
+      { key: 'sille_insight',     cadence: 'monthly', label: 'Indsigt', kind: 'text', definition: 'Hvilke kreative retninger, formater og budskaber skal gentages, udvikles eller skaleres?' },
+    ],
+  },
+];
+
 const kpiToken = () => crypto.randomBytes(9).toString('base64url');
 
 async function initKpi() {
@@ -1412,6 +1458,11 @@ async function initKpi() {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS kpi_metrics_brand_key ON kpi_metrics (brand, metric_key);
     ALTER TABLE kpi_metrics ADD COLUMN IF NOT EXISTS direction TEXT;
+    -- kind: 'number' eller 'text'. target: mål pr. periode (valgfrit).
+    -- auto_key: tallet foreslås fra Influencer Trackeren (se kpiAuto).
+    ALTER TABLE kpi_metrics ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'number';
+    ALTER TABLE kpi_metrics ADD COLUMN IF NOT EXISTS target NUMERIC;
+    ALTER TABLE kpi_metrics ADD COLUMN IF NOT EXISTS auto_key TEXT DEFAULT '';
     CREATE TABLE IF NOT EXISTS kpi_entries (
       id SERIAL PRIMARY KEY,
       metric_id INTEGER NOT NULL REFERENCES kpi_metrics(id) ON DELETE CASCADE,
@@ -1424,6 +1475,7 @@ async function initKpi() {
       source TEXT DEFAULT 'manual'
     );
     CREATE UNIQUE INDEX IF NOT EXISTS kpi_entries_metric_period ON kpi_entries (metric_id, period);
+    ALTER TABLE kpi_entries ADD COLUMN IF NOT EXISTS text_value TEXT DEFAULT '';
     CREATE TABLE IF NOT EXISTS kpi_decisions (
       id SERIAL PRIMARY KEY,
       brand TEXT NOT NULL DEFAULT 'cainte',
@@ -1455,7 +1507,7 @@ async function initKpi() {
       await pool.query(
         `INSERT INTO kpi_owners (brand, name, func, token, active, sort_order)
          SELECT $1,$2,$3,$4,$5,$6
-         WHERE NOT EXISTS (SELECT 1 FROM kpi_owners WHERE brand=$1 AND name=$2)`,
+         WHERE NOT EXISTS (SELECT 1 FROM kpi_owners WHERE brand=$1 AND (name=$2 OR func=$3))`,
         [brand, o.name, o.func, kpiToken(), o.active !== false, o.sort]
       );
     }
@@ -1476,6 +1528,34 @@ async function initKpi() {
         [brand, m.key, m.dir || 'up']
       );
     }
+  }
+  for (const person of KPI_PERSONS) await seedKpiPerson(person);
+}
+
+// Personlige rapporter ud fra rolle-PDF'erne. Køres én gang pr. person: findes
+// personens første tal allerede, er alt videre rettet i appen og røres ikke.
+async function seedKpiPerson(p) {
+  const exists = await pool.query('SELECT 1 FROM kpi_metrics WHERE brand=$1 AND metric_key=$2', [p.brand, p.metrics[0].key]);
+  if (exists.rows.length) return;
+  let owner = (await pool.query('SELECT * FROM kpi_owners WHERE brand=$1 AND (name=$2 OR name=$3) ORDER BY id LIMIT 1',
+    [p.brand, p.name, p.renameFrom || p.name])).rows[0];
+  if (owner) {
+    owner = (await pool.query('UPDATE kpi_owners SET name=$1, func=$2, active=TRUE WHERE id=$3 RETURNING *', [p.name, p.func, owner.id])).rows[0];
+  } else {
+    owner = (await pool.query(
+      `INSERT INTO kpi_owners (brand, name, func, token, active, sort_order) VALUES ($1,$2,$3,$4,TRUE,$5) RETURNING *`,
+      [p.brand, p.name, p.func, kpiToken(), p.sort || 9])).rows[0];
+  }
+  if (p.retire?.length) {
+    await pool.query('UPDATE kpi_metrics SET active=FALSE WHERE brand=$1 AND metric_key = ANY($2)', [p.brand, p.retire]);
+  }
+  for (const [i, m] of p.metrics.entries()) {
+    await pool.query(
+      `INSERT INTO kpi_metrics (brand, metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order, kind, target, auto_key)
+       VALUES ($1,$2,$3,$4,$5,'B',$6,'up',$7,$8,$9,TRUE,$10,$11,$12,$13)
+       ON CONFLICT (brand, metric_key) DO NOTHING`,
+      [p.brand, m.key, m.label, m.kind === 'text' ? '' : (m.unit ?? 'antal'), m.definition || '', m.cadence, p.func,
+       m.auto ? 'Influencer Tracker' : '', owner.id, (p.sortBase || 100) + i, m.kind || 'number', m.target ?? null, m.auto || '']);
   }
 }
 
@@ -1524,26 +1604,33 @@ app.get('/api/kpi/data', async (req, res) => {
 
 // Upsert af ét tal. on_time falder aldrig tilbage til true: er ugen først
 // leveret for sent, tæller en senere rettelse stadig som for sent.
-async function kpiSaveEntry({ metricId, period, value, note, by, source }) {
+async function kpiSaveEntry({ metricId, period, value, text, note, by, source }) {
   const deadline = kpiDeadline(period);
   const onTime = !deadline || Date.now() <= deadline.getTime();
   const r = await pool.query(
-    `INSERT INTO kpi_entries (metric_id, period, value, note, submitted_by, submitted_at, on_time, source)
-     VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7)
+    `INSERT INTO kpi_entries (metric_id, period, value, note, submitted_by, submitted_at, on_time, source, text_value)
+     VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7,$8)
      ON CONFLICT (metric_id, period) DO UPDATE SET
-       value=EXCLUDED.value, note=EXCLUDED.note, submitted_by=EXCLUDED.submitted_by,
+       value=EXCLUDED.value, text_value=EXCLUDED.text_value, note=EXCLUDED.note, submitted_by=EXCLUDED.submitted_by,
        submitted_at=NOW(), on_time = kpi_entries.on_time AND EXCLUDED.on_time,
        source=EXCLUDED.source
      RETURNING *`,
-    [metricId, period, kpiNum(value), note || '', by || '', onTime, source || 'manual']
+    [metricId, period, text !== undefined ? null : kpiNum(value), note || '', by || '', onTime, source || 'manual', text || '']
   );
   return r.rows[0];
 }
 
 app.put('/api/kpi/entries', async (req, res) => {
-  const { metric_id, period, value, note, submitted_by } = req.body;
+  const { metric_id, period, value, text, note, submitted_by } = req.body;
   if (!metric_id || !period) return res.status(400).json({ error: 'metric_id og period er påkrævet' });
   try {
+    if (text !== undefined) {
+      if (!String(text).trim()) {
+        await pool.query('DELETE FROM kpi_entries WHERE metric_id=$1 AND period=$2', [metric_id, period]);
+        return res.json({ success: true, cleared: true });
+      }
+      return res.json(await kpiSaveEntry({ metricId: metric_id, period, text: String(text), note, by: submitted_by, source: 'manual' }));
+    }
     if (value === null || value === '') {
       await pool.query('DELETE FROM kpi_entries WHERE metric_id=$1 AND period=$2', [metric_id, period]);
       return res.json({ success: true, cleared: true });
@@ -1582,8 +1669,8 @@ app.get('/api/kpi/report/:period', async (req, res) => {
     if (!kpiPeriodType(period)) return res.status(400).json({ error: 'ugyldig periode' });
     const cadence = kpiPeriodType(period);
     const r = await pool.query(
-      `SELECT m.metric_key, m.label, m.unit, m.layer, m.func, m.source, m.definition,
-              e.value, e.submitted_at, e.on_time
+      `SELECT m.metric_key, m.label, m.unit, m.layer, m.func, m.source, m.definition, m.kind, m.target,
+              e.value, e.text_value, e.submitted_at, e.on_time, e.id AS entry_id
          FROM kpi_metrics m
          LEFT JOIN kpi_entries e ON e.metric_id=m.id AND e.period=$2
         WHERE m.brand=$1 AND m.active AND m.cadence=$3
@@ -1593,13 +1680,55 @@ app.get('/api/kpi/report/:period', async (req, res) => {
       metrics: r.rows.map(x => ({
         key: x.metric_key, label: x.label, unit: x.unit, layer: x.layer,
         func: x.func, source: x.source, definition: x.definition,
+        kind: x.kind, target: x.target === null ? null : Number(x.target),
         value: x.value === null ? null : Number(x.value),
-        status: x.value === null ? 'missing' : (x.on_time ? 'ok' : 'late'),
+        text: x.kind === 'text' ? (x.text_value || null) : undefined,
+        status: x.entry_id === null ? 'missing' : (x.on_time ? 'ok' : 'late'),
         submittedAt: x.submitted_at,
       })),
     });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
+
+// Forslag fra Influencer Trackeren til Janas felter. Kun et forslag: hun kan
+// rette tallet før hun sender, og et gemt tal vinder altid.
+const KPI_PAID_TYPES = ['Paid', 'Ambassador', 'Ongoing'];
+const kpiRange = (period) => {
+  const iso = (d) => d.toISOString().slice(0, 10);
+  if (kpiPeriodType(period) === 'weekly') {
+    const mon = isoWeekMonday(period);
+    return [iso(mon), iso(new Date(mon.getTime() + 6 * 86400000))];
+  }
+  const [y, m] = period.split('-').map(Number);
+  return [`${period}-01`, iso(new Date(Date.UTC(y, m, 0)))];
+};
+async function kpiAuto(brand, period) {
+  const [from, to] = kpiRange(period);
+  const [paid, gifts, content] = await Promise.all([
+    pool.query(
+      `SELECT COUNT(*) FILTER (WHERE c.status IN ('in_progress','ongoing'))::int AS active,
+              COUNT(*) FILTER (WHERE c.status <> 'cancelled'
+                AND (c.created_at AT TIME ZONE 'Europe/Copenhagen')::date BETWEEN $3::date AND $4::date)::int AS new
+         FROM collaborations c JOIN creators cr ON cr.id=c.creator_id
+        WHERE cr.brand=$1 AND c.type = ANY($2)`, [brand, KPI_PAID_TYPES, from, to]),
+    pool.query(
+      `SELECT COUNT(DISTINCT c.id)::int AS total,
+              COUNT(DISTINCT c.id) FILTER (WHERE p.platform='TikTok' OR p.type='TikTok Video')::int AS tiktok
+         FROM content_pieces p JOIN collaborations c ON c.id=p.collab_id JOIN creators cr ON cr.id=c.creator_id
+        WHERE cr.brand=$1 AND c.type='Gifting' AND p.type <> 'UGC' AND p.posted_on BETWEEN $2 AND $3`, [brand, from, to]),
+    pool.query(
+      `SELECT COALESCE(SUM(p.qty) FILTER (WHERE p.type='TikTok Video' OR (p.platform='TikTok' AND p.type <> 'Story')),0)::int AS tiktok_videos,
+              COALESCE(SUM(p.qty) FILTER (WHERE p.type='Story'),0)::int AS stories,
+              COALESCE(SUM(p.qty) FILTER (WHERE p.type IN ('Post','Reel') AND p.platform <> 'TikTok'),0)::int AS posts_reels
+         FROM content_pieces p JOIN collaborations c ON c.id=p.collab_id JOIN creators cr ON cr.id=c.creator_id
+        WHERE cr.brand=$1 AND p.posted_on BETWEEN $2 AND $3`, [brand, from, to]),
+  ]);
+  return {
+    paid_active: paid.rows[0].active, paid_new: paid.rows[0].new,
+    gift_total: gifts.rows[0].total, gift_tiktok: gifts.rows[0].tiktok,
+    ...content.rows[0],
+  };
+}
 
 // ── Det personlige link ───────────────────────────────────────────────────────
 // /r/<token> — ingen adgangskode, ingen navigation. Kun denne persons felter for
@@ -1611,28 +1740,42 @@ app.get('/api/kpi/me/:token', async (req, res) => {
     if (!owner) return res.status(404).json({ error: 'ukendt link' });
 
     const cadence = req.query.cadence === 'monthly' ? 'monthly' : 'weekly';
-    const period = req.query.period || kpiCurrentPeriod(cadence);
+    // Måneden afleveres frem til den 7. i næste måned — indtil da er det den
+    // forrige måned man rapporterer på.
+    const period = req.query.period || (cadence === 'monthly' && cphParts().day <= 7
+      ? kpiShiftPeriod(kpiCurrentPeriod('monthly'), -1) : kpiCurrentPeriod(cadence));
     const prev = kpiShiftPeriod(period, -1);
-    const mRes = await pool.query(
-      `SELECT * FROM kpi_metrics WHERE brand=$1 AND owner_id=$2 AND active AND cadence=$3 ORDER BY sort_order, id`,
-      [owner.brand, owner.id, cadence]);
+    const allRes = await pool.query(
+      `SELECT * FROM kpi_metrics WHERE brand=$1 AND owner_id=$2 AND active ORDER BY sort_order, id`,
+      [owner.brand, owner.id]);
+    const cadences = ['weekly', 'monthly'].filter(c => allRes.rows.some(m => m.cadence === c));
+    const mRes = { rows: allRes.rows.filter(m => m.cadence === cadence) };
     const ids = mRes.rows.map(m => m.id);
     const eRes = ids.length
       ? await pool.query('SELECT * FROM kpi_entries WHERE metric_id = ANY($1) AND period = ANY($2)', [ids, [period, prev]])
       : { rows: [] };
     const at = (mid, p) => eRes.rows.find(e => e.metric_id === mid && e.period === p);
     const deadline = kpiDeadline(period);
+    const auto = mRes.rows.some(m => m.auto_key) ? await kpiAuto(owner.brand, period) : {};
+    const num = (e) => (e && e.value !== null ? Number(e.value) : null);
 
     res.json({
       owner: { id: owner.id, name: owner.name, func: owner.func },
+      cadence, cadences,
       period, periodLabel: kpiPeriodLabel(period),
       deadline: deadline ? deadline.toISOString() : null,
       past: deadline ? Date.now() > deadline.getTime() : false,
-      fields: mRes.rows.map(m => ({
-        id: m.id, label: m.label, unit: m.unit, definition: m.definition,
-        value: at(m.id, period) ? Number(at(m.id, period).value) : null,
-        last: at(m.id, prev) ? Number(at(m.id, prev).value) : null,
-      })),
+      fields: mRes.rows.map(m => {
+        const cur = at(m.id, period);
+        const suggested = !cur && m.auto_key && auto[m.auto_key] !== undefined;
+        return {
+          id: m.id, label: m.label, unit: m.unit, definition: m.definition, kind: m.kind || 'number',
+          target: m.target === null ? null : Number(m.target),
+          value: m.kind === 'text' ? (cur ? cur.text_value || '' : '') : suggested ? auto[m.auto_key] : num(cur),
+          auto: !!suggested,
+          last: m.kind === 'text' ? null : num(at(m.id, prev)),
+        };
+      }),
     });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
@@ -1644,10 +1787,15 @@ app.post('/api/kpi/me/:token', async (req, res) => {
     const oRes = await pool.query('SELECT * FROM kpi_owners WHERE token=$1', [req.params.token]);
     const owner = oRes.rows[0];
     if (!owner) return res.status(404).json({ error: 'ukendt link' });
-    const mine = await pool.query('SELECT id FROM kpi_metrics WHERE owner_id=$1', [owner.id]);
-    const allowed = new Set(mine.rows.map(r => r.id));
+    const mine = await pool.query('SELECT id, kind FROM kpi_metrics WHERE owner_id=$1', [owner.id]);
+    const kindOf = new Map(mine.rows.map(r => [r.id, r.kind]));
     for (const [id, v] of Object.entries(values)) {
-      if (!allowed.has(Number(id))) continue;
+      if (!kindOf.has(Number(id))) continue;
+      if (kindOf.get(Number(id)) === 'text') {
+        // Tomme tekstfelter gemmes også — så tæller rapporten som afleveret.
+        await kpiSaveEntry({ metricId: Number(id), period, text: String(v ?? '').trim(), note: note || '', by: owner.name, source: 'manual' });
+        continue;
+      }
       if (v === '' || v === null) continue;
       await kpiSaveEntry({ metricId: Number(id), period, value: v, note: note || '', by: owner.name, source: 'manual' });
     }
@@ -1695,27 +1843,28 @@ app.delete('/api/kpi/owners/:id', async (req, res) => {
 
 // ── Registret ─────────────────────────────────────────────────────────────────
 app.post('/api/kpi/metrics', async (req, res) => {
-  const { metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order } = req.body;
+  const { metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order, kind, target } = req.body;
   if (!label || !String(label).trim()) return res.status(400).json({ error: 'label er påkrævet' });
   try {
     const key = (metric_key || String(label).toLowerCase().replace(/[^a-z0-9]+/g, '_')).slice(0, 60);
     const r = await pool.query(
-      `INSERT INTO kpi_metrics (brand, metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      `INSERT INTO kpi_metrics (brand, metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order, kind, target)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [brandOf(req), key, String(label).trim(), unit || '', definition || '', layer || 'B', cadence || 'weekly',
-       direction || 'up', func || '', source || '', owner_id || null, active !== false, sort_order || 99]);
+       direction || 'up', func || '', source || '', owner_id || null, active !== false, sort_order || 99,
+       kind === 'text' ? 'text' : 'number', kpiNum(target)]);
     res.json(r.rows[0]);
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/kpi/metrics/:id', async (req, res) => {
-  const { label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order } = req.body;
+  const { label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order, kind, target } = req.body;
   try {
     const r = await pool.query(
       `UPDATE kpi_metrics SET label=$1, unit=$2, definition=$3, layer=$4, cadence=$5, direction=$6, func=$7, source=$8,
-              owner_id=$9, active=$10, sort_order=$11 WHERE id=$12 RETURNING *`,
+              owner_id=$9, active=$10, sort_order=$11, kind=$12, target=$13 WHERE id=$14 RETURNING *`,
       [label, unit || '', definition || '', layer || 'B', cadence || 'weekly', direction || 'up', func || '', source || '',
-       owner_id || null, active !== false, sort_order || 0, req.params.id]);
+       owner_id || null, active !== false, sort_order || 0, kind === 'text' ? 'text' : 'number', kpiNum(target), req.params.id]);
     res.json(r.rows[0] || { success: true });
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
