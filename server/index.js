@@ -1409,6 +1409,8 @@ const KPI_PERSONS = [
       { key: 'jana_shopmy_packages', cadence: 'monthly', label: 'ShopMy — pakker sendt ud' },
       { key: 'jana_shopmy_shares',   cadence: 'monthly', label: 'ShopMy — delinger' },
       { key: 'jana_shopmy_revenue',  cadence: 'monthly', label: 'ShopMy — omsætning', unit: 'EUR' },
+      { key: 'jana_shopmy_collabs',  cadence: 'monthly', label: 'ShopMy — samarbejder' },
+      { key: 'jana_shopmy_content',  cadence: 'monthly', label: 'ShopMy — content delt' },
       { key: 'jana_special',       cadence: 'monthly', label: 'Særlige resultater', kind: 'text', definition: 'Fx gifting til en creator med 3 mio. følgere eller tre nye creators fundet til NYC.' },
     ],
   },
