@@ -1614,7 +1614,7 @@ app.get('/api/kpi/data', async (req, res) => {
       history,
       deadline: deadline ? deadline.toISOString() : null,
       past: deadline ? Date.now() > deadline.getTime() : false,
-      metrics: metrics.rows,
+      metrics: metrics.rows.map(m => ({ ...m, total: KPI_TOTAL_AUTO.includes(m.auto_key) })),
       owners: owners.rows,
       entries: entries.rows,
       decisions: decisions.rows,
@@ -1715,7 +1715,8 @@ app.get('/api/kpi/report/:period', async (req, res) => {
 // rette tallet før hun sender, og et gemt tal vinder altid.
 const KPI_PAID_TYPES = ['Paid', 'Ambassador', 'Ongoing'];
 // Øjebliksbilleder: hvad der er i gang lige nu, ikke hvad der kom til i
-// perioden. Står under »I alt« på det personlige link, så de ikke blandes.
+// perioden. Står under »I alt« på det personlige link og på boardet, når man
+// ser én ansvarlig, så de ikke blandes.
 const KPI_TOTAL_AUTO = ['paid_active', 'active_total'];
 const kpiRange = (period) => {
   const iso = (d) => d.toISOString().slice(0, 10);

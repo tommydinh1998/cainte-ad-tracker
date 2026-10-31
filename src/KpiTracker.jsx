@@ -107,6 +107,10 @@ export default function KpiTracker() {
   const [monthData, setMonthData] = useState(null);
   const [pilot, setPilot] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Klik på en ansvarlig = se kun deres tal. Huskes på enheden, som Hvem-filteret i Team Tasks.
+  const [person, setPersonState] = useState(() => { try { return localStorage.getItem("cainte_kpi_person") || ""; } catch { return ""; } });
+  const setPerson = (v) => { setPersonState(v); try { localStorage.setItem("cainte_kpi_person", v); } catch {} };
+  const pickPerson = (id) => { setPerson(String(id)); if (tab !== "week" && tab !== "month") setTab("week"); };
 
   const load = async (p, setter) => {
     const r = await api("/api/kpi/data" + (p ? `?period=${p}` : ""));
@@ -133,6 +137,10 @@ export default function KpiTracker() {
 
   if (!data) return <div style={page}><div style={{ color: T.textSec, padding: 40 }}>Henter …</div></div>;
 
+  // Kun ansvarlige der faktisk har tal. En slettet eller inaktiv ansvarlig nulstiller filteret.
+  const people = data.owners.filter(o => o.active && data.metrics.some(m => m.owner_id === o.id && m.active));
+  const chosen = people.find(o => String(o.id) === person) || null;
+
   return (
     <div style={page}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
@@ -154,29 +162,50 @@ export default function KpiTracker() {
         ))}
       </div>
 
-      {tab === "week"  && <PeriodView d={data} cadence="weekly" onPeriod={setPeriod} onChanged={refresh} busy={busy} setBusy={setBusy} />}
+      {(tab === "week" || tab === "month") && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 18 }}>
+          <PersonPill active={!chosen} onClick={() => setPerson("")}>Alle</PersonPill>
+          {people.map(o => (
+            <PersonPill key={o.id} active={chosen?.id === o.id} onClick={() => setPerson(chosen?.id === o.id ? "" : String(o.id))}>{o.name}</PersonPill>
+          ))}
+          <span style={{ fontSize: 12.5, color: T.textSec, marginLeft: 4 }}>
+            {chosen ? `Viser kun ${chosen.name}s tal — huskes på denne enhed.` : "Klik på en ansvarlig for kun at se deres tal."}
+          </span>
+        </div>
+      )}
+
+      {tab === "week"  && <PeriodView d={data} cadence="weekly" person={chosen} onPickPerson={pickPerson} onPeriod={setPeriod} onChanged={refresh} busy={busy} setBusy={setBusy} />}
       {tab === "month" && (monthData
-        ? <PeriodView d={monthData} cadence="monthly" onPeriod={setMonthPeriod} onChanged={refresh} busy={busy} setBusy={setBusy} />
+        ? <PeriodView d={monthData} cadence="monthly" person={chosen} onPickPerson={pickPerson} onPeriod={setMonthPeriod} onChanged={refresh} busy={busy} setBusy={setBusy} />
         : <div style={{ color: T.textSec }}>Henter …</div>)}
-      {tab === "subs"   && <Submissions d={data} />}
+      {tab === "subs"   && <Submissions d={data} onPickPerson={pickPerson} />}
       {tab === "defs"   && <Definitions d={data} onChanged={refresh} />}
-      {tab === "owners" && <Owners d={data} onChanged={refresh} />}
+      {tab === "owners" && <Owners d={data} onChanged={refresh} onPickPerson={pickPerson} />}
       {tab === "pilot"  && <Pilot p={pilot} d={data} onChanged={() => api(`/api/kpi/pilot?period=${period}&weeks=4`).then(r => r.json()).then(setPilot)} />}
     </div>
   );
 }
 
 // ── Mandagsmødets skærm ───────────────────────────────────────────────────────
-function PeriodView({ d, cadence, onPeriod, onChanged, busy, setBusy }) {
+function PeriodView({ d, cadence, person, onPickPerson, onPeriod, onChanged, busy, setBusy }) {
   const [open, setOpen] = useState(null);
   const [seen, setSeen] = useState(() => new Set());
 
-  const metrics = d.metrics.filter(m => m.active && m.cadence === cadence);
+  const metrics = d.metrics.filter(m => m.active && m.cadence === cadence && (!person || m.owner_id === person.id));
+  const nyt = cadence === "weekly" ? "Nyt i ugen" : "Nyt i måneden";
+  // Hele boardet: lag A og B. Én ansvarlig: deres egne tal, delt i nyt og i alt
+  // som på deres personlige link — lag A har ingen ansvarlig og hører ikke til.
+  const sections = person
+    ? [{ key: "new",   label: metrics.some(m => m.total) ? nyt : person.name, note: person.func && person.func !== person.name ? person.func : "", rows: metrics.filter(m => !m.total) },
+       { key: "total", label: "I alt — i gang lige nu", note: "hvad der kører nu, ikke hvad der kom til", rows: metrics.filter(m => m.total) }]
+    : [{ key: "A", label: "Lag A — maskine",   note: "trækkes af systemerne", rows: metrics.filter(m => m.layer === "A") },
+       { key: "B", label: "Lag B — indtastet", note: "ét tal pr. ansvarlig · manglende markeres, ikke som nul", rows: metrics.filter(m => m.layer === "B") }];
   const entry = (mid, p = d.period) => d.entries.find(e => e.metric_id === mid && e.period === p);
   const prevPeriod = d.history[d.history.length - 2];
 
   const layerB = metrics.filter(m => m.layer === "B");
   const submitted = layerB.filter(m => entry(m.id)).length;
+  const decisions = d.decisions.filter(x => x.period === d.period && (!person || metrics.some(m => m.id === x.metric_id)));
 
   // Et åbnet tal er et brugt tal. Uden det her kan port 3 ikke besvares.
   const openRow = (m) => {
@@ -208,21 +237,24 @@ function PeriodView({ d, cadence, onPeriod, onChanged, busy, setBusy }) {
         </div>
       </div>
 
-      {["A", "B"].map(layer => {
-        const rows = metrics.filter(m => m.layer === layer);
-        if (!rows.length) return null;
+      {person && !metrics.length && (
+        <div style={{ ...card, padding: "22px", fontSize: 14, color: T.textSec, marginBottom: 22 }}>
+          {person.name} har ingen {cadence === "weekly" ? "ugentlige" : "månedlige"} tal.
+        </div>
+      )}
+
+      {sections.map(s => {
+        if (!s.rows.length) return null;
         return (
-          <div key={layer} style={{ marginBottom: 22 }}>
+          <div key={s.key} style={{ marginBottom: 22 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 9, paddingLeft: 4 }}>
-              <Label>{layer === "A" ? "Lag A — maskine" : "Lag B — indtastet"}</Label>
-              <span style={{ fontSize: 11.5, color: T.textTert }}>
-                {layer === "A" ? "trækkes af systemerne" : "ét tal pr. ansvarlig · manglende markeres, ikke som nul"}
-              </span>
+              <Label>{s.label}</Label>
+              <span style={{ fontSize: 11.5, color: T.textTert }}>{s.note}</span>
             </div>
             <div style={{ ...card, overflow: "hidden" }}>
-              {rows.map((m, i) => (
+              {s.rows.map((m, i) => (
                 <Row key={m.id} m={m} d={d} entry={entry(m.id)} prev={entry(m.id, prevPeriod)}
-                     first={i === 0} open={open === m.id} onToggle={() => openRow(m)}
+                     first={i === 0} open={open === m.id} onToggle={() => openRow(m)} onPickPerson={person ? null : onPickPerson}
                      onChanged={onChanged} busy={busy} setBusy={setBusy} />
               ))}
             </div>
@@ -230,10 +262,10 @@ function PeriodView({ d, cadence, onPeriod, onChanged, busy, setBusy }) {
         );
       })}
 
-      {d.decisions.filter(x => x.period === d.period).length > 0 && (
+      {decisions.length > 0 && (
         <div style={{ ...card, padding: "18px 22px" }}>
           <Label>Beslutninger truffet på {d.periodLabel.toLowerCase()}</Label>
-          {d.decisions.filter(x => x.period === d.period).map(x => (
+          {decisions.map(x => (
             <div key={x.id} style={{ fontSize: 14, padding: "8px 0", borderBottom: `1px solid ${T.border}` }}>
               {x.body}
               <span style={{ color: T.textTert, fontSize: 12, marginLeft: 8 }}>
@@ -254,7 +286,16 @@ const Stat = ({ label, value, color }) => (
   </div>
 );
 
-function Row({ m, d, entry, prev, first, open, onToggle, onChanged, busy, setBusy }) {
+const PersonPill = ({ active, onClick, children }) => (
+  <button type="button" onClick={onClick}
+    style={{ padding: "6px 13px", borderRadius: 99, cursor: "pointer", fontSize: 13, fontFamily: "inherit",
+             border: `1px solid ${active ? T.blue : T.border}`, fontWeight: active ? 700 : 500,
+             background: active ? T.blue + "14" : "#fff", color: active ? T.blue : T.textSec }}>
+    {children}
+  </button>
+);
+
+function Row({ m, d, entry, prev, first, open, onToggle, onPickPerson, onChanged, busy, setBusy }) {
   const [edit, setEdit] = useState("");
   const [decision, setDecision] = useState("");
   const owner = d.owners.find(o => o.id === m.owner_id);
@@ -294,7 +335,10 @@ function Row({ m, d, entry, prev, first, open, onToggle, onChanged, busy, setBus
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.01em" }}>{m.label}</div>
           <div style={{ fontSize: 11.5, color: T.textTert, marginTop: 2 }}>
-            {m.layer === "A" ? m.source : (owner ? owner.name : "ingen ansvarlig")}
+            {m.layer === "A" ? m.source : !owner ? "ingen ansvarlig" : onPickPerson ? (
+              <span onClick={e => { e.stopPropagation(); onPickPerson(owner.id); }} title={`Se kun ${owner.name}s tal`}
+                    style={{ color: T.blue, cursor: "pointer" }}>{owner.name}</span>
+            ) : owner.name}
             {entry && !entry.on_time && <span style={{ color: T.orange, marginLeft: 8 }}>for sent</span>}
           </div>
         </div>
@@ -370,7 +414,7 @@ function Row({ m, d, entry, prev, first, open, onToggle, onChanged, busy, setBus
 }
 
 // ── Disciplin-gitteret: port 2 ────────────────────────────────────────────────
-function Submissions({ d }) {
+function Submissions({ d, onPickPerson }) {
   const layerB = d.metrics.filter(m => m.active && m.layer === "B" && m.cadence === "weekly");
   const byOwner = {};
   layerB.forEach(m => { (byOwner[m.owner_id] = byOwner[m.owner_id] || []).push(m); });
@@ -396,7 +440,9 @@ function Submissions({ d }) {
             return (
               <tr key={oid} style={{ borderTop: `1px solid ${T.border}` }}>
                 <td style={{ padding: "11px 10px", fontSize: 14, fontWeight: 600 }}>
-                  {owner ? owner.name : "Ingen ansvarlig"}
+                  {owner ? (
+                    <span onClick={() => onPickPerson(owner.id)} title={`Se kun ${owner.name}s tal`} style={{ color: T.blue, cursor: "pointer" }}>{owner.name}</span>
+                  ) : "Ingen ansvarlig"}
                   <div style={{ fontSize: 11.5, color: T.textTert, fontWeight: 400 }}>{ms.map(m => m.label).join(" · ")}</div>
                 </td>
                 {d.history.map(p => {
@@ -508,7 +554,7 @@ function Definitions({ d, onChanged }) {
 }
 
 // ── Ansvarlige og deres links ─────────────────────────────────────────────────
-function Owners({ d, onChanged }) {
+function Owners({ d, onChanged, onPickPerson }) {
   const [editing, setEditing] = useState(null);
   const [copied, setCopied] = useState(null);
   const base = typeof window !== "undefined" ? window.location.origin : "";
@@ -550,7 +596,9 @@ function Owners({ d, onChanged }) {
                                      borderTop: i === 0 ? "none" : `1px solid ${T.border}`, opacity: o.active ? 1 : 0.5 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 650 }}>
-                  {o.name} {!o.active && <span style={{ fontSize: 12, color: T.textTert, fontWeight: 400 }}>· inaktiv</span>}
+                  {o.active && mine.length ? (
+                    <span onClick={() => onPickPerson(o.id)} title={`Se kun ${o.name}s tal`} style={{ color: T.blue, cursor: "pointer" }}>{o.name}</span>
+                  ) : o.name} {!o.active && <span style={{ fontSize: 12, color: T.textTert, fontWeight: 400 }}>· inaktiv</span>}
                 </div>
                 <div style={{ fontSize: 12, color: T.textTert, marginTop: 2 }}>
                   {o.slack_handle ? o.slack_handle + " · " : ""}{mine.length ? mine.map(m => m.label).join(" · ") : "ingen tal tilknyttet"}
