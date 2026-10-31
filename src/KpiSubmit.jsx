@@ -106,8 +106,17 @@ export default function KpiSubmit({ token }) {
           </div>
         )}
 
-        {data.fields.map(f => (
+        {/* Nyt i perioden øverst, »i alt« (i gang lige nu) nederst — så de to
+            slags tal ikke blandes. Overskrifterne vises kun når der er begge. */}
+        {data.fields.map((f, i) => (
           <div key={f.id} style={{ marginBottom:22 }}>
+            {data.fields.some(x => x.total) && (i === 0 || f.total !== data.fields[i - 1].total) && (
+              <div style={{ fontSize:11, fontWeight:700, color:T.textTert, textTransform:"uppercase", letterSpacing:"0.09em",
+                            margin: i === 0 ? "0 0 14px" : "34px 0 14px", paddingTop: i === 0 ? 0 : 18,
+                            borderTop: i === 0 ? "none" : "1px solid rgba(60,60,67,0.12)" }}>
+                {f.total ? "I alt — i gang lige nu" : cadence === "weekly" ? "Nyt i ugen" : "Nyt i måneden"}
+              </div>
+            )}
             <div style={{ fontSize:15, fontWeight:650, marginBottom:3 }}>{f.label}</div>
             {/* Definitionen står ved feltet, ikke i et dokument — glidende
                 definitioner er den hyppigste grund til at tal inflaterer. */}

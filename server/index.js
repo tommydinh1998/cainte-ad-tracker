@@ -1384,9 +1384,7 @@ const KPI_PERSONS = [
     brand: 'cainte', name: 'Jana', func: 'Influencer', renameFrom: 'Influencer', sortBase: 100,
     retire: ['giftings_sent', 'ugc_received'],
     metrics: [
-      { key: 'jana_paid_active',   cadence: 'weekly',  label: 'Betalte samarbejder — igangværende', auto: 'paid_active', definition: 'Paid, Ambassador og Ongoing med status igang/ongoing. Hentet fra Influencer Trackeren.' },
       { key: 'jana_paid_new',      cadence: 'weekly',  label: 'Nye betalte samarbejder',            auto: 'paid_new',    definition: 'Paid, Ambassador og Ongoing oprettet i perioden.' },
-      { key: 'jana_active_total',  cadence: 'weekly',  label: 'Aktive samarbejder i alt',           auto: 'active_total', definition: 'Alle igangværende samarbejder, også gifting, UGC og Fake Meta.' },
       { key: 'jana_gift_tiktok',   cadence: 'weekly',  label: 'TikTok-giftings',                    auto: 'gift_tiktok', target: 2, definition: 'Organiske, taggede giftings på TikTok.' },
       { key: 'jana_gift_total',    cadence: 'weekly',  label: 'Giftings samlet',                    auto: 'gift_total',  target: 5, definition: 'Organiske, taggede giftings på alle platforme, inkl. TikTok.' },
       { key: 'jana_tiktok_videos', cadence: 'weekly',  label: 'TikTok-videoer',                     auto: 'tiktok_videos', definition: 'Taggede TikTok-videoer. Content deles i gruppen.' },
@@ -1399,8 +1397,10 @@ const KPI_PERSONS = [
       { key: 'jana_projects',      cadence: 'weekly',  label: 'Ekstra projekter',      kind: 'text', definition: 'Projekter og opgaver uden for de faste KPI\'er, fx NYC content shoot.' },
       { key: 'jana_extra',         cadence: 'weekly',  label: 'Ekstra bemærkninger',   kind: 'text', definition: 'Nye muligheder, særlige resultater og relevante opdateringer.' },
       { key: 'jana_drive',         cadence: 'weekly',  label: 'Link til Drive-mappe',  kind: 'text', definition: 'Mappen med ugens taggede opslag.' },
-      { key: 'jana_m_paid_active', cadence: 'monthly', label: 'Betalte samarbejder — igangværende', auto: 'paid_active' },
-      { key: 'jana_m_paid_new',    cadence: 'monthly', label: 'Nye betalte samarbejder i måneden',  auto: 'paid_new' },
+      // I alt — hvad der er i gang lige nu, ikke hvad der kom til i perioden. Står nederst.
+      { key: 'jana_paid_active',   cadence: 'weekly',  label: 'Betalte samarbejder — igangværende', auto: 'paid_active', definition: 'Paid, Ambassador og Ongoing med status igang/ongoing. Hentet fra Influencer Trackeren.' },
+      { key: 'jana_active_total',  cadence: 'weekly',  label: 'Aktive samarbejder i alt',           auto: 'active_total', definition: 'Alle igangværende samarbejder, også gifting, UGC og Fake Meta.' },
+      { key: 'jana_m_paid_new',   cadence: 'monthly', label: 'Nye betalte samarbejder i måneden',  auto: 'paid_new' },
       { key: 'jana_fake_meta',     cadence: 'monthly', label: 'Fake Meta-content',                  target: 5, definition: 'Antal creatorvideoer sendt videre til ads.' },
       { key: 'jana_cavere_sent',   cadence: 'monthly', label: 'Cavere Signature — ure sendt ud' },
       { key: 'jana_cavere_posted', cadence: 'monthly', label: 'Cavere Signature — creators der har postet' },
@@ -1412,6 +1412,7 @@ const KPI_PERSONS = [
       { key: 'jana_shopmy_collabs',  cadence: 'monthly', label: 'ShopMy — samarbejder' },
       { key: 'jana_shopmy_content',  cadence: 'monthly', label: 'ShopMy — content delt' },
       { key: 'jana_special',       cadence: 'monthly', label: 'Særlige resultater', kind: 'text', definition: 'Fx gifting til en creator med 3 mio. følgere eller tre nye creators fundet til NYC.' },
+      { key: 'jana_m_paid_active', cadence: 'monthly', label: 'Betalte samarbejder — igangværende', auto: 'paid_active' },
     ],
   },
   {
@@ -1560,23 +1561,22 @@ async function seedKpiPerson(p) {
   await addKpiPersonMetrics(p, owner.id);
 }
 
-// Felter der kommer til senere lægges ind uden at røre de eksisterende. Kommer
-// der noget nyt, sættes rækkefølgen efter listen, så det nye står det rigtige sted.
+// Felter der kommer til senere lægges ind uden at røre de eksisterende.
+// Rækkefølgen følger altid listen — den kan ikke rettes i appen, så listen er
+// sandheden. Kun rækker der står forkert opdateres.
 async function addKpiPersonMetrics(p, ownerId) {
   if (!ownerId) return;
-  let added = 0;
   for (const [i, m] of p.metrics.entries()) {
-    const r = await pool.query(
+    await pool.query(
       `INSERT INTO kpi_metrics (brand, metric_key, label, unit, definition, layer, cadence, direction, func, source, owner_id, active, sort_order, kind, target, auto_key)
        VALUES ($1,$2,$3,$4,$5,'B',$6,'up',$7,$8,$9,TRUE,$10,$11,$12,$13)
        ON CONFLICT (brand, metric_key) DO NOTHING`,
       [p.brand, m.key, m.label, m.kind === 'text' ? '' : (m.unit ?? 'antal'), m.definition || '', m.cadence, p.func,
        m.auto ? 'Influencer Tracker' : '', ownerId, (p.sortBase || 100) + i, m.kind || 'number', m.target ?? null, m.auto || '']);
-    added += r.rowCount;
   }
-  if (!added) return;
   for (const [i, m] of p.metrics.entries()) {
-    await pool.query('UPDATE kpi_metrics SET sort_order=$3 WHERE brand=$1 AND metric_key=$2', [p.brand, m.key, (p.sortBase || 100) + i]);
+    await pool.query('UPDATE kpi_metrics SET sort_order=$3 WHERE brand=$1 AND metric_key=$2 AND sort_order IS DISTINCT FROM $3',
+      [p.brand, m.key, (p.sortBase || 100) + i]);
   }
 }
 
@@ -1714,6 +1714,9 @@ app.get('/api/kpi/report/:period', async (req, res) => {
 // Forslag fra Influencer Trackeren til Janas felter. Kun et forslag: hun kan
 // rette tallet før hun sender, og et gemt tal vinder altid.
 const KPI_PAID_TYPES = ['Paid', 'Ambassador', 'Ongoing'];
+// Øjebliksbilleder: hvad der er i gang lige nu, ikke hvad der kom til i
+// perioden. Står under »I alt« på det personlige link, så de ikke blandes.
+const KPI_TOTAL_AUTO = ['paid_active', 'active_total'];
 const kpiRange = (period) => {
   const iso = (d) => d.toISOString().slice(0, 10);
   if (kpiPeriodType(period) === 'weekly') {
@@ -1795,6 +1798,7 @@ app.get('/api/kpi/me/:token', async (req, res) => {
           target: m.target === null ? null : Number(m.target),
           value: m.kind === 'text' ? (cur ? cur.text_value || '' : '') : suggested ? auto[m.auto_key] : num(cur),
           auto: !!suggested,
+          total: KPI_TOTAL_AUTO.includes(m.auto_key),
           last: m.kind === 'text' ? null : num(at(m.id, prev)),
         };
       }),
