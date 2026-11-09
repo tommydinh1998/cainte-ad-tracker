@@ -149,7 +149,7 @@ export default function KpiSubmit({ token }) {
                   Mål: {f.target}{v !== "" && v !== undefined ? (hit ? " ✓" : " — ikke nået") : ""}
                 </span>;
               })()}
-              {f.auto && <span style={{ color:T.blue, fontWeight:600 }}>Hentet fra Influencer Trackeren, ret hvis forkert</span>}
+              {f.auto && <span style={{ color:T.blue, fontWeight:600 }}>{f.autoNote || "Hentet fra Influencer Trackeren, ret hvis forkert"}</span>}
               <span>{f.last !== null ? `Sidst: ${f.last}` : `Intet tal ${cadence === "weekly" ? "sidste uge" : "sidste måned"}`}</span>
             </div>
             </>)}

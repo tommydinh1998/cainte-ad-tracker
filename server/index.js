@@ -1384,24 +1384,37 @@ const KPI_PERSONS = [
     brand: 'cainte', name: 'Jana', func: 'Influencer', renameFrom: 'Influencer', sortBase: 100,
     retire: ['giftings_sent', 'ugc_received'],
     metrics: [
+      // Ugentligt, i rækkefølgen fra »Janas rolle & KPI'er« (nov-26).
+      { key: 'jana_contacted',     cadence: 'weekly',  label: 'Nye influencers kontaktet',          definition: 'Antal nye, unikke profiler kontaktet i ugen.' },
+      { key: 'jana_unpaid_new',    cadence: 'weekly',  label: 'Nye unpaid UGC/Fake Meta-samarbejder', definition: 'Antal nye unpaid aftaler indgået i ugen.' },
       { key: 'jana_paid_new',      cadence: 'weekly',  label: 'Nye betalte samarbejder',            auto: 'paid_new',    definition: 'Paid, Ambassador og Ongoing oprettet i perioden.' },
+      { key: 'jana_received_videos', cadence: 'weekly', label: 'Content modtaget — videoer' },
+      { key: 'jana_received_images', cadence: 'weekly', label: 'Content modtaget — billeder' },
+      { key: 'jana_fake_meta_week', cadence: 'weekly', label: 'Sendt til Fake Meta', definition: 'Content-stykker sendt videre til ads i ugen. Månedsmålet er 5.' },
       { key: 'jana_gift_tiktok',   cadence: 'weekly',  label: 'TikTok-giftings',                    auto: 'gift_tiktok', target: 2, definition: 'Organiske, taggede giftings på TikTok.' },
       { key: 'jana_gift_total',    cadence: 'weekly',  label: 'Giftings samlet',                    auto: 'gift_total',  target: 5, definition: 'Organiske, taggede giftings på alle platforme, inkl. TikTok.' },
       { key: 'jana_tiktok_videos', cadence: 'weekly',  label: 'TikTok-videoer',                     auto: 'tiktok_videos', definition: 'Taggede TikTok-videoer. Content deles i gruppen.' },
       { key: 'jana_stories',       cadence: 'weekly',  label: 'Stories',                            auto: 'stories',     definition: 'Organiske, taggede stories. Content deles i gruppen.' },
       { key: 'jana_posts_reels',   cadence: 'weekly',  label: 'Posts og reels',                     auto: 'posts_reels', definition: 'Organiske, taggede posts og reels. Content deles i gruppen.' },
-      { key: 'jana_received_videos', cadence: 'weekly', label: 'Content modtaget — videoer' },
-      { key: 'jana_received_images', cadence: 'weekly', label: 'Content modtaget — billeder' },
-      { key: 'jana_fake_meta_week', cadence: 'weekly', label: 'Sendt til Fake Meta', definition: 'Content-stykker sendt videre til ads i ugen. Månedsmålet er 5.' },
       { key: 'jana_learning',      cadence: 'weekly',  label: 'Læring og næste fokus', kind: 'text', definition: 'Hvad virkede godt, og hvad skal prioriteres mere næste uge?' },
       { key: 'jana_projects',      cadence: 'weekly',  label: 'Ekstra projekter',      kind: 'text', definition: 'Projekter og opgaver uden for de faste KPI\'er, fx NYC content shoot.' },
       { key: 'jana_extra',         cadence: 'weekly',  label: 'Ekstra bemærkninger',   kind: 'text', definition: 'Nye muligheder, særlige resultater og relevante opdateringer.' },
       { key: 'jana_drive',         cadence: 'weekly',  label: 'Link til Drive-mappe',  kind: 'text', definition: 'Mappen med ugens taggede opslag.' },
       // I alt — hvad der er i gang lige nu, ikke hvad der kom til i perioden. Står nederst.
       { key: 'jana_paid_active',   cadence: 'weekly',  label: 'Betalte samarbejder — igangværende', auto: 'paid_active', definition: 'Paid, Ambassador og Ongoing med status igang/ongoing. Hentet fra Influencer Trackeren.' },
+      { key: 'jana_unpaid_active', cadence: 'weekly',  label: 'Unpaid UGC/Fake Meta-samarbejder — aktive', total: true, definition: 'Samlet antal aktive unpaid aftaler ved ugens afslutning.' },
       { key: 'jana_active_total',  cadence: 'weekly',  label: 'Aktive samarbejder i alt',           auto: 'active_total', definition: 'Alle igangværende samarbejder, også gifting, UGC og Fake Meta.' },
+      // Månedligt. Tallene fra ugerne lægges sammen automatisk (sum:), aktive
+      // samarbejder er status ved månedens sidste uge (last:), ikke en sum.
+      { key: 'jana_m_contacted',   cadence: 'monthly', label: 'Influencers kontaktet i måneden',    auto: 'sum:jana_contacted' },
+      { key: 'jana_m_unpaid_new',  cadence: 'monthly', label: 'Nye unpaid UGC/Fake Meta-samarbejder i måneden', auto: 'sum:jana_unpaid_new' },
       { key: 'jana_m_paid_new',   cadence: 'monthly', label: 'Nye betalte samarbejder i måneden',  auto: 'paid_new' },
-      { key: 'jana_fake_meta',     cadence: 'monthly', label: 'Fake Meta-content',                  target: 5, definition: 'Antal creatorvideoer sendt videre til ads.' },
+      { key: 'jana_m_received_videos', cadence: 'monthly', label: 'Content modtaget — videoer',     auto: 'sum:jana_received_videos' },
+      { key: 'jana_m_received_images', cadence: 'monthly', label: 'Content modtaget — billeder',    auto: 'sum:jana_received_images' },
+      { key: 'jana_fake_meta',     cadence: 'monthly', label: 'Fake Meta-content',                  auto: 'sum:jana_fake_meta_week', target: 5, definition: 'Antal creatorvideoer sendt videre til ads.' },
+      { key: 'jana_roi_revenue',   cadence: 'monthly', label: 'Betalte samarbejder — omsætning',    auto: 'roi_revenue', unit: 'kr', definition: 'Fra ROI-fanen i Influencer Trackeren, beregninger dateret i måneden.' },
+      { key: 'jana_roi_cost',      cadence: 'monthly', label: 'Betalte samarbejder — omkostninger', auto: 'roi_cost',    unit: 'kr', definition: 'Honorar + annoncekroner fra ROI-fanen.' },
+      { key: 'jana_roi_profit',    cadence: 'monthly', label: 'Betalte samarbejder — indtjening',   auto: 'roi_profit',  unit: 'kr', definition: 'Omsætning minus omkostninger.' },
       { key: 'jana_cavere_sent',   cadence: 'monthly', label: 'Cavere Signature — ure sendt ud' },
       { key: 'jana_cavere_posted', cadence: 'monthly', label: 'Cavere Signature — creators der har postet' },
       { key: 'jana_best_men',      cadence: 'monthly', label: 'Bedste mandlige creator',  kind: 'text', definition: 'Navn og salgstal.' },
@@ -1413,6 +1426,7 @@ const KPI_PERSONS = [
       { key: 'jana_shopmy_content',  cadence: 'monthly', label: 'ShopMy — content delt' },
       { key: 'jana_special',       cadence: 'monthly', label: 'Særlige resultater', kind: 'text', definition: 'Fx gifting til en creator med 3 mio. følgere eller tre nye creators fundet til NYC.' },
       { key: 'jana_m_paid_active', cadence: 'monthly', label: 'Betalte samarbejder — igangværende', auto: 'paid_active' },
+      { key: 'jana_m_unpaid_active', cadence: 'monthly', label: 'Unpaid UGC/Fake Meta-samarbejder — aktive', auto: 'last:jana_unpaid_active', definition: 'Status ved månedens sidste uge, ikke summen af ugerne.' },
     ],
   },
   {
@@ -1432,6 +1446,10 @@ const KPI_PERSONS = [
     ],
   },
 ];
+
+const kpiAutoSource = (auto) => !auto ? '' : /^(sum|last):/.test(auto) ? 'Ugentlige tal' : 'Influencer Tracker';
+// Felter der hører under »I alt« uden at være hentet automatisk.
+const KPI_TOTAL_KEYS = KPI_PERSONS.flatMap(p => p.metrics.filter(m => m.total).map(m => m.key));
 
 const kpiToken = () => crypto.randomBytes(9).toString('base64url');
 
@@ -1572,7 +1590,13 @@ async function addKpiPersonMetrics(p, ownerId) {
        VALUES ($1,$2,$3,$4,$5,'B',$6,'up',$7,$8,$9,TRUE,$10,$11,$12,$13)
        ON CONFLICT (brand, metric_key) DO NOTHING`,
       [p.brand, m.key, m.label, m.kind === 'text' ? '' : (m.unit ?? 'antal'), m.definition || '', m.cadence, p.func,
-       m.auto ? 'Influencer Tracker' : '', ownerId, (p.sortBase || 100) + i, m.kind || 'number', m.target ?? null, m.auto || '']);
+       kpiAutoSource(m.auto), ownerId, (p.sortBase || 100) + i, m.kind || 'number', m.target ?? null, m.auto || '']);
+  }
+  // Et felt der før var manuelt og nu hentes automatisk (fx Fake Meta-content).
+  // Kun tomme auto_key udfyldes — et felt skifter aldrig kilde bag ryggen på en.
+  for (const m of p.metrics.filter(x => x.auto)) {
+    await pool.query(`UPDATE kpi_metrics SET auto_key=$3, source=$4 WHERE brand=$1 AND metric_key=$2 AND COALESCE(auto_key,'')=''`,
+      [p.brand, m.key, m.auto, kpiAutoSource(m.auto)]);
   }
   for (const [i, m] of p.metrics.entries()) {
     await pool.query('UPDATE kpi_metrics SET sort_order=$3 WHERE brand=$1 AND metric_key=$2 AND sort_order IS DISTINCT FROM $3',
@@ -1614,7 +1638,7 @@ app.get('/api/kpi/data', async (req, res) => {
       history,
       deadline: deadline ? deadline.toISOString() : null,
       past: deadline ? Date.now() > deadline.getTime() : false,
-      metrics: metrics.rows.map(m => ({ ...m, total: KPI_TOTAL_AUTO.includes(m.auto_key) })),
+      metrics: metrics.rows.map(m => ({ ...m, total: kpiIsTotal(m) })),
       owners: owners.rows,
       entries: entries.rows,
       decisions: decisions.rows,
@@ -1717,7 +1741,46 @@ const KPI_PAID_TYPES = ['Paid', 'Ambassador', 'Ongoing'];
 // Øjebliksbilleder: hvad der er i gang lige nu, ikke hvad der kom til i
 // perioden. Står under »I alt« på det personlige link og på boardet, når man
 // ser én ansvarlig, så de ikke blandes.
-const KPI_TOTAL_AUTO = ['paid_active', 'active_total'];
+const KPI_TOTAL_AUTO = ['paid_active', 'active_total', 'last:jana_unpaid_active'];
+const kpiIsTotal = (m) => KPI_TOTAL_AUTO.includes(m.auto_key) || KPI_TOTAL_KEYS.includes(m.metric_key);
+const kpiAutoNote = (k) => k.startsWith('sum:') ? 'Lagt sammen fra dine ugentlige tal, ret hvis forkert'
+  : k.startsWith('last:') ? 'Fra månedens sidste uge, ret hvis forkert'
+  : k.startsWith('roi_') ? 'Hentet fra ROI-fanen, ret hvis forkert' : 'Hentet fra Influencer Trackeren, ret hvis forkert';
+// ISO-uger der hører til en måned: dem hvis torsdag ligger i måneden.
+const kpiWeeksOfMonth = (period) => {
+  const [y, m] = period.split('-').map(Number);
+  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const weeks = [];
+  for (let d = 1; d <= days; d++) if (new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 4) weeks.push(isoWeekKeyOf(y, m, d));
+  return weeks;
+};
+// Månedens forslag ud fra ugerne og ROI-fanen. Ingen data giver intet forslag,
+// aldrig et nul — et manglende tal skal kunne ses som manglende.
+async function kpiAutoMonthly(brand, period, metrics) {
+  const out = {};
+  if (kpiPeriodType(period) !== 'monthly') return out;
+  const keys = [...new Set(metrics.map(m => m.auto_key || '').filter(k => /^(sum|last):/.test(k)).map(k => k.split(':')[1]))];
+  if (keys.length) {
+    const weeks = kpiWeeksOfMonth(period);
+    const r = await pool.query(
+      `SELECT m.metric_key, e.period, e.value FROM kpi_entries e JOIN kpi_metrics m ON m.id=e.metric_id
+        WHERE m.brand=$1 AND m.metric_key = ANY($2) AND e.period = ANY($3) AND e.value IS NOT NULL`, [brand, keys, weeks]);
+    for (const k of keys) {
+      const rows = r.rows.filter(x => x.metric_key === k).sort((a, b) => a.period.localeCompare(b.period));
+      if (!rows.length) continue;
+      out[`sum:${k}`] = rows.reduce((t, x) => t + Number(x.value), 0);
+      out[`last:${k}`] = Number(rows[rows.length - 1].value);
+    }
+  }
+  if (metrics.some(m => (m.auto_key || '').startsWith('roi_'))) {
+    const [from, to] = kpiRange(period);
+    const r = (await pool.query(
+      `SELECT COUNT(*)::int AS n, COALESCE(SUM(revenue),0)::float AS revenue, COALESCE(SUM(fee + ad_spend),0)::float AS cost
+         FROM roi_calcs WHERE brand=$1 AND calc_date BETWEEN $2 AND $3`, [brand, from, to])).rows[0];
+    if (r.n) Object.assign(out, { roi_revenue: r.revenue, roi_cost: r.cost, roi_profit: r.revenue - r.cost });
+  }
+  return out;
+}
 const kpiRange = (period) => {
   const iso = (d) => d.toISOString().slice(0, 10);
   if (kpiPeriodType(period) === 'weekly') {
@@ -1782,7 +1845,8 @@ app.get('/api/kpi/me/:token', async (req, res) => {
       : { rows: [] };
     const at = (mid, p) => eRes.rows.find(e => e.metric_id === mid && e.period === p);
     const deadline = kpiDeadline(period);
-    const auto = mRes.rows.some(m => m.auto_key) ? await kpiAuto(owner.brand, period) : {};
+    const auto = mRes.rows.some(m => m.auto_key)
+      ? { ...(await kpiAuto(owner.brand, period)), ...(await kpiAutoMonthly(owner.brand, period, mRes.rows)) } : {};
     const num = (e) => (e && e.value !== null ? Number(e.value) : null);
 
     res.json({
@@ -1799,7 +1863,8 @@ app.get('/api/kpi/me/:token', async (req, res) => {
           target: m.target === null ? null : Number(m.target),
           value: m.kind === 'text' ? (cur ? cur.text_value || '' : '') : suggested ? auto[m.auto_key] : num(cur),
           auto: !!suggested,
-          total: KPI_TOTAL_AUTO.includes(m.auto_key),
+          total: kpiIsTotal(m),
+          autoNote: suggested ? kpiAutoNote(m.auto_key) : null,
           last: m.kind === 'text' ? null : num(at(m.id, prev)),
         };
       }),
