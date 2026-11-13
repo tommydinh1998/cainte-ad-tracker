@@ -1383,13 +1383,16 @@ const KPI_PERSONS = [
   {
     brand: 'cainte', name: 'Jana', func: 'Influencer', renameFrom: 'Influencer', sortBase: 100,
     retire: ['giftings_sent', 'ugc_received'],
+    // Erstattet efter første seed: skjules ved hver opstart, data bevares.
+    drop: ['jana_received_videos', 'jana_received_images', 'jana_m_received_videos', 'jana_m_received_images'],
     metrics: [
       // Ugentligt, i rækkefølgen fra »Janas rolle & KPI'er« (nov-26).
       { key: 'jana_contacted',     cadence: 'weekly',  label: 'Nye influencers kontaktet',          definition: 'Antal nye, unikke profiler kontaktet i ugen.' },
       { key: 'jana_unpaid_new',    cadence: 'weekly',  label: 'Nye unpaid UGC/Fake Meta-samarbejder', definition: 'Antal nye unpaid aftaler indgået i ugen.' },
       { key: 'jana_paid_new',      cadence: 'weekly',  label: 'Nye betalte samarbejder',            auto: 'paid_new',    definition: 'Paid, Ambassador og Ongoing oprettet i perioden.' },
-      { key: 'jana_received_videos', cadence: 'weekly', label: 'Content modtaget — videoer' },
-      { key: 'jana_received_images', cadence: 'weekly', label: 'Content modtaget — billeder' },
+      { key: 'jana_received_fake_meta', cadence: 'weekly', label: 'Content modtaget (Fake Meta)' },
+      { key: 'jana_received_paid',      cadence: 'weekly', label: 'Content modtaget (Paid)' },
+      { key: 'jana_tagged_content',     cadence: 'weekly', label: 'Tagget content' },
       { key: 'jana_fake_meta_week', cadence: 'weekly', label: 'Sendt til Fake Meta', definition: 'Content-stykker sendt videre til ads i ugen. Månedsmålet er 5.' },
       { key: 'jana_gift_tiktok',   cadence: 'weekly',  label: 'TikTok-giftings',                    auto: 'gift_tiktok', target: 2, definition: 'Organiske, taggede giftings på TikTok.' },
       { key: 'jana_gift_total',    cadence: 'weekly',  label: 'Giftings samlet',                    auto: 'gift_total',  target: 5, definition: 'Organiske, taggede giftings på alle platforme, inkl. TikTok.' },
@@ -1409,8 +1412,9 @@ const KPI_PERSONS = [
       { key: 'jana_m_contacted',   cadence: 'monthly', label: 'Influencers kontaktet i måneden',    auto: 'sum:jana_contacted' },
       { key: 'jana_m_unpaid_new',  cadence: 'monthly', label: 'Nye unpaid UGC/Fake Meta-samarbejder i måneden', auto: 'sum:jana_unpaid_new' },
       { key: 'jana_m_paid_new',   cadence: 'monthly', label: 'Nye betalte samarbejder i måneden',  auto: 'paid_new' },
-      { key: 'jana_m_received_videos', cadence: 'monthly', label: 'Content modtaget — videoer',     auto: 'sum:jana_received_videos' },
-      { key: 'jana_m_received_images', cadence: 'monthly', label: 'Content modtaget — billeder',    auto: 'sum:jana_received_images' },
+      { key: 'jana_m_received_fake_meta', cadence: 'monthly', label: 'Content modtaget (Fake Meta)', auto: 'sum:jana_received_fake_meta' },
+      { key: 'jana_m_received_paid',      cadence: 'monthly', label: 'Content modtaget (Paid)',      auto: 'sum:jana_received_paid' },
+      { key: 'jana_m_tagged_content',     cadence: 'monthly', label: 'Tagget content',               auto: 'sum:jana_tagged_content' },
       { key: 'jana_fake_meta',     cadence: 'monthly', label: 'Fake Meta-content',                  auto: 'sum:jana_fake_meta_week', target: 5, definition: 'Antal creatorvideoer sendt videre til ads.' },
       { key: 'jana_roi_revenue',   cadence: 'monthly', label: 'Betalte samarbejder — omsætning',    auto: 'roi_revenue', unit: 'kr', definition: 'Fra ROI-fanen i Influencer Trackeren, beregninger dateret i måneden.' },
       { key: 'jana_roi_cost',      cadence: 'monthly', label: 'Betalte samarbejder — omkostninger', auto: 'roi_cost',    unit: 'kr', definition: 'Honorar + annoncekroner fra ROI-fanen.' },
@@ -1563,6 +1567,9 @@ async function initKpi() {
 // personens første tal allerede, er alt videre rettet i appen og røres ikke.
 async function seedKpiPerson(p) {
   const exists = await pool.query('SELECT owner_id FROM kpi_metrics WHERE brand=$1 AND metric_key=$2', [p.brand, p.metrics[0].key]);
+  if (p.drop?.length) {
+    await pool.query('UPDATE kpi_metrics SET active=FALSE WHERE brand=$1 AND metric_key = ANY($2)', [p.brand, p.drop]);
+  }
   if (exists.rows.length) return addKpiPersonMetrics(p, exists.rows[0].owner_id);
   let owner = (await pool.query('SELECT * FROM kpi_owners WHERE brand=$1 AND (name=$2 OR name=$3) ORDER BY id LIMIT 1',
     [p.brand, p.name, p.renameFrom || p.name])).rows[0];
