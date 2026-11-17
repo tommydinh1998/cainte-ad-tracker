@@ -2,9 +2,9 @@ import { useState, useEffect } from "react";
 import { T, fmt, daysBetween, Chip, Label, IconBtn, StatusBtn, Field } from "./theme.jsx";
 import { api, brandMeta } from "./brand.js";
 
-const PLATFORMS = ["Meta", "TikTok", "Boosting"];
+const PLATFORMS = ["Meta", "TikTok", "Pinterest", "Boosting"];
 const SLACK_CHANNEL = "C0B6UQRJC9E";
-const PLATFORM_CONFIG = { Meta: { color: "#007AFF" }, TikTok: { color: "#FF2D55" }, Boosting: { color: "#FF9500" } };
+const PLATFORM_CONFIG = { Meta: { color: "#007AFF" }, TikTok: { color: "#FF2D55" }, Pinterest: { color: "#E60023" }, Boosting: { color: "#FF9500" } };
 
 const today = new Date();
 
@@ -865,7 +865,7 @@ export default function AdTracker() {
                   return <button key={key} onClick={()=>setFilterState(key)} style={{ padding:"7px 14px",borderRadius:99,border:"none",cursor:"pointer",fontSize:13,fontWeight:active?600:400,flexShrink:0,background:active?T.text:T.pillBg,color:active?"#fff":T.textSec,transition:"all 0.15s" }}>{label}</button>;
                 })}
                 <div style={{ width:1,height:20,background:T.border,flexShrink:0,marginLeft:"auto" }} />
-                {["All","Meta","TikTok"].map(p=>{
+                {["All","Meta","TikTok","Pinterest"].map(p=>{
                   const active=filterPlatform===p; const c=PLATFORM_CONFIG[p]?.color;
                   return <button key={p} onClick={()=>setFilterPlatform(p)} style={{ padding:"7px 14px",borderRadius:99,border:"none",cursor:"pointer",fontSize:13,fontWeight:active?600:400,flexShrink:0,background:active&&c?c+"18":active?T.text:T.pillBg,color:active&&c?c:active?"#fff":T.textSec,transition:"all 0.15s" }}>{p}</button>;
                 })}
